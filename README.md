@@ -12,6 +12,9 @@ The terminal demo uses ratatui to render an interactive layout explorer.
 - Cycle through 30+ color themes
 - Add and remove panels at runtime
 - Tab through focus with decoration-aware highlighting
+- Spatial focus navigation (HJKL)
+- Swap and resize panels live
+- Smooth animated transitions between layouts
 - See layout diff stats (added, removed, resized, moved, unchanged)
 
 ### Run it
@@ -27,6 +30,9 @@ cargo run
 | `←` `→` / `h` `l` | Switch preset |
 | `↑` `↓` / `j` `k` | Switch theme |
 | `Tab` / `Shift+Tab` | Cycle focus |
+| `H` `J` `K` `L` | Spatial focus (left/down/up/right) |
 | `a` | Add panel |
 | `d` | Remove focused panel |
+| `[` `]` | Swap focused panel backward/forward |
+| `+` `-` | Resize focused panel |
 | `q` / `Esc` | Quit |

@@ -740,9 +740,9 @@ dependencies = [
 
 [[package]]
 name = "palette-core"
-version = "0.7.1"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebf88be5d52ff211540877ec58902d5cf0e6da305f226c00a8410ecd5aade637"
+checksum = "b348e06e52eca3183af701ab23a4fe8ff9259ffa4eab8c92656e51619c365b6f"
 dependencies = [
  "pastey",
  "ratatui",
@@ -753,9 +753,9 @@ dependencies = [
 
 [[package]]
 name = "panes"
-version = "0.5.1"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50e4681ec2c824b16e1a5039d1e29273151a97a8576d8785472d53acf5bb483e"
+checksum = "f2612233e85de44770d204e3f9f02a1d5394b768ce8ccb24265d80c6d0a11ac1"
 dependencies = [
  "rustc-hash",
  "taffy",
@@ -775,9 +775,9 @@ dependencies = [
 
 [[package]]
 name = "panes-ratatui"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb7ba4a82f0e7d01e27070c3ea20e87ef6b525c0cded543e8a0b3114ff2f14d4"
+checksum = "a897f45c1fb5a10c4288a67463ef2d1c1834c3cd150ce05e732407dc3083e095"
 dependencies = [
  "panes",
  "ratatui",

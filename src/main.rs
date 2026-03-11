@@ -1,5 +1,6 @@
 use std::io;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
@@ -7,9 +8,8 @@ use crossterm::terminal::{
 };
 use palette_core::registry::{Registry, ThemeInfo};
 use palette_core::terminal::{ResolvedTerminalTheme, style, to_resolved_terminal_theme};
-use panes::{PanelInputKind, PresetInfo};
-use panes::runtime::LayoutRuntime;
-use panes::{Layout, PanelId, ResolvedLayout, fixed};
+use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
+use panes::{FocusDirection, Layout, PanelId, PanelInputKind, PresetInfo, ResolvedLayout, fixed};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -17,24 +17,35 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 
-// -- Preset construction --
-// Each preset is one line: pick a layout, set ratios/gaps, get a runtime.
+// -- Constants --
 
 const DEFAULT_PANELS: &[&str] = &["editor", "terminal", "logs"];
+const ANIM_DURATION: Duration = Duration::from_millis(250);
+const FRAME_BUDGET: Duration = Duration::from_millis(16);
+
+// -- Preset construction --
+// Each preset is one line: pick a layout, set ratios/gaps, get a runtime.
 
 fn build_preset(info: &PresetInfo, panels: &[Arc<str>]) -> Option<LayoutRuntime> {
     let iter = || panels.iter().map(Arc::clone);
     let rt = match info.name {
-        "master-stack" => Layout::master_stack(iter()).master_ratio(0.6).gap(1.0).into_runtime(),
-        "centered-master" => {
-            Layout::centered_master(iter()).master_ratio(0.5).gap(1.0).into_runtime()
-        }
+        "master-stack" => Layout::master_stack(iter())
+            .master_ratio(0.6)
+            .gap(1.0)
+            .into_runtime(),
+        "centered-master" => Layout::centered_master(iter())
+            .master_ratio(0.5)
+            .gap(1.0)
+            .into_runtime(),
         "monocle" => Layout::monocle(iter()).into_runtime(),
         "scrollable" => Layout::scrollable(iter()).gap(1.0).into_runtime(),
         "dwindle" => Layout::dwindle(iter()).ratio(0.5).gap(1.0).into_runtime(),
         "spiral" => Layout::spiral(iter()).ratio(0.5).gap(1.0).into_runtime(),
         "columns" => Layout::columns(3, iter()).gap(1.0).into_runtime(),
-        "deck" => Layout::deck(iter()).master_ratio(0.7).gap(1.0).into_runtime(),
+        "deck" => Layout::deck(iter())
+            .master_ratio(0.7)
+            .gap(1.0)
+            .into_runtime(),
         "tabbed" => Layout::tabbed(iter()).tab_height(3.0).into_runtime(),
         "stacked" => Layout::stacked(iter()).title_height(1.0).into_runtime(),
         "dashboard" => {
@@ -80,6 +91,21 @@ fn resolve_theme(registry: &Registry, info: &ThemeInfo) -> ResolvedTerminalTheme
     to_resolved_terminal_theme(&palette)
 }
 
+// -- Animation state --
+// Smooth transitions via lerp between layout snapshots.
+
+struct Animation {
+    from: PanesFrame,
+    start: Instant,
+    buf: Vec<Option<panes::Rect>>,
+}
+
+// Ease-out cubic for snappy, decelerating motion
+fn ease_out(t: f32) -> f32 {
+    let inv = 1.0 - t;
+    1.0 - inv * inv * inv
+}
+
 // -- App state --
 
 struct App {
@@ -93,6 +119,9 @@ struct App {
     themes: Vec<ThemeInfo>,
     theme_idx: usize,
     theme: ResolvedTerminalTheme,
+    animation: Option<Animation>,
+    last_frame: Option<PanesFrame>,
+    last_area: (f32, f32),
     running: bool,
 }
 
@@ -120,7 +149,25 @@ impl App {
             themes,
             theme_idx: 0,
             theme,
+            animation: None,
+            last_frame: None,
+            last_area: (0.0, 0.0),
             running: true,
+        }
+    }
+
+    fn is_animating(&self) -> bool {
+        self.animation.is_some()
+    }
+
+    // Snapshot the current layout before a mutation so we can animate from it
+    fn snapshot_for_animation(&mut self) {
+        if let Some(ref frame) = self.last_frame {
+            self.animation = Some(Animation {
+                from: frame.clone(),
+                start: Instant::now(),
+                buf: Vec::new(),
+            });
         }
     }
 
@@ -154,6 +201,7 @@ impl App {
     }
 
     fn switch_preset(&mut self, idx: usize) {
+        self.snapshot_for_animation();
         self.preset_idx = idx;
         self.rebuild_current();
     }
@@ -178,43 +226,86 @@ impl App {
 
     fn next_focus(&mut self) {
         if let Some(rt) = &mut self.runtime {
-            let _ = rt.focus_next();
+            rt.focus_next();
         }
     }
 
     fn prev_focus(&mut self) {
         if let Some(rt) = &mut self.runtime {
-            let _ = rt.focus_prev();
+            rt.focus_prev();
+        }
+    }
+
+    // Spatial focus: move to nearest panel in a direction
+    fn focus_direction(&mut self, dir: FocusDirection) {
+        if let Some(rt) = &mut self.runtime {
+            rt.focus_direction_current(dir);
         }
     }
 
     // Runtime handles live add/remove — no rebuild needed
     fn add_panel(&mut self) {
-        match (self.is_dynamic(), self.runtime.as_mut()) {
-            (true, Some(rt)) => {
-                let name: Arc<str> = format!("panel-{}", self.next_panel_id).into();
-                self.next_panel_id += 1;
-                self.panels.push(Arc::clone(&name));
+        if !self.is_dynamic() {
+            return;
+        }
+        let name: Arc<str> = format!("panel-{}", self.next_panel_id).into();
+        self.next_panel_id += 1;
+        self.panels.push(Arc::clone(&name));
+        match self.runtime.is_some() {
+            true => {
+                self.snapshot_for_animation();
+                let Some(rt) = self.runtime.as_mut() else {
+                    return;
+                };
                 let _ = rt.add_panel(name);
             }
-            (true, None) => {
-                let name: Arc<str> = format!("panel-{}", self.next_panel_id).into();
-                self.next_panel_id += 1;
-                self.panels.push(name);
-                self.rebuild_current();
-            }
-            _ => {}
+            false => self.rebuild_current(),
         }
     }
 
     fn remove_panel(&mut self) {
-        if let (true, Some(rt)) = (self.is_dynamic(), self.runtime.as_mut()) {
-            let Some(pid) = rt.focused() else { return };
-            let Some(kind) = rt.focused_kind().map(String::from) else {
-                return;
-            };
-            let _ = rt.remove_panel(pid);
-            self.panels.retain(|p| p.as_ref() != kind);
+        if !self.is_dynamic() {
+            return;
+        }
+        let Some((pid, kind)) = self.runtime.as_ref().and_then(|rt| {
+            let pid = rt.focused()?;
+            let kind = rt.focused_kind().map(String::from)?;
+            Some((pid, kind))
+        }) else {
+            return;
+        };
+        self.snapshot_for_animation();
+        let Some(rt) = self.runtime.as_mut() else {
+            return;
+        };
+        let _ = rt.remove_panel(pid);
+        self.panels.retain(|p| p.as_ref() != kind.as_str());
+    }
+
+    // Swap focused panel with its neighbor in the sequence
+    fn swap_forward(&mut self) {
+        self.snapshot_for_animation();
+        if let Some(rt) = &mut self.runtime {
+            rt.swap_next();
+        }
+    }
+
+    fn swap_backward(&mut self) {
+        self.snapshot_for_animation();
+        if let Some(rt) = &mut self.runtime {
+            rt.swap_prev();
+        }
+    }
+
+    // Resize focused panel boundary
+    fn resize_focused(&mut self, delta: f32) {
+        let pid = match self.runtime.as_ref().and_then(|rt| rt.focused()) {
+            Some(pid) => pid,
+            None => return,
+        };
+        self.snapshot_for_animation();
+        if let Some(rt) = &mut self.runtime {
+            let _ = rt.resize_boundary(pid, delta);
         }
     }
 }
@@ -286,10 +377,15 @@ fn render_layout(
     runtime: &mut LayoutRuntime,
     area: Rect,
     theme: &ResolvedTerminalTheme,
+    animation: &mut Option<Animation>,
+    last_frame: &mut Option<PanesFrame>,
+    last_area: &mut (f32, f32),
 ) {
     let error_style = Style::default().fg(Color::Red).bg(theme.base.background);
+    let w = f32::from(area.width);
+    let h = f32::from(area.height);
 
-    let rt_frame = match runtime.resolve(f32::from(area.width), f32::from(area.height)) {
+    let rt_frame = match runtime.resolve(w, h) {
         Ok(f) => f,
         Err(e) => {
             let msg = format!("resolve error: {e}");
@@ -298,11 +394,28 @@ fn render_layout(
         }
     };
 
-    // Runtime caches layout across frames; diff tracks what changed
-    let diff = rt_frame.diff();
-    render_panels(frame, rt_frame.layout(), area, theme, runtime.focused());
+    let target = rt_frame.layout();
 
-    // Diff stats overlay — bottom left
+    // Lerp between old and new layout during animation
+    let display = animation.as_mut().and_then(|anim| {
+        let t = (anim.start.elapsed().as_secs_f32() / ANIM_DURATION.as_secs_f32()).min(1.0);
+        let lerped = anim
+            .from
+            .layout()
+            .lerp_into(target, ease_out(t), &mut anim.buf);
+        (t < 1.0).then_some(lerped)
+    });
+    if display.is_none() {
+        *animation = None;
+    }
+
+    let resolved = display.as_ref().unwrap_or(target);
+    *last_area = (w, h);
+
+    render_panels(frame, resolved, area, theme, runtime.focused());
+
+    // Diff stats from runtime — computed automatically during resolve()
+    let diff = runtime.last_diff();
     let diff_text = format!(
         "+{} -{} ~{} ={} >{}",
         diff.added.len(),
@@ -322,6 +435,9 @@ fn render_layout(
         Paragraph::new(diff_text).style(style(theme.typography.comment, theme.base.background)),
         diff_area,
     );
+
+    // Store frame for next animation snapshot (moved after all borrows of target end)
+    *last_frame = Some(rt_frame);
 }
 
 fn render(frame: &mut Frame, app: &mut App) {
@@ -349,7 +465,9 @@ fn render(frame: &mut Frame, app: &mut App) {
     let status_area = chrome_rects[&status_pid];
 
     let Some(ref mut rt) = app.runtime else {
-        let error_style = Style::default().fg(Color::Red).bg(app.theme.base.background);
+        let error_style = Style::default()
+            .fg(Color::Red)
+            .bg(app.theme.base.background);
         frame.render_widget(
             Paragraph::new("build error").style(error_style),
             layout_area,
@@ -357,7 +475,15 @@ fn render(frame: &mut Frame, app: &mut App) {
         render_status(frame, app, status_area);
         return;
     };
-    render_layout(frame, rt, layout_area, &app.theme);
+    render_layout(
+        frame,
+        rt,
+        layout_area,
+        &app.theme,
+        &mut app.animation,
+        &mut app.last_frame,
+        &mut app.last_area,
+    );
 
     render_status(frame, app, status_area);
 }
@@ -410,14 +536,12 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(focus_text, style(warn_fg, sb_bg)),
     ]);
 
-    let help_line = Line::from(vec![Span::styled(
-        " ←/→ preset  ↑/↓ theme  Tab/S-Tab focus  a add  d remove  q quit",
-        style(muted, sb_bg),
-    )]);
+    let help =
+        " ←/→ preset  ↑/↓ theme  Tab focus  HJKL spatial  a/d add/rm  [/] swap  +/- resize  q quit";
+    let help_line = Line::from(vec![Span::styled(help, style(muted, sb_bg))]);
 
     frame.render_widget(
-        Paragraph::new(vec![status_line, focus_line, help_line])
-            .style(Style::default().bg(sb_bg)),
+        Paragraph::new(vec![status_line, focus_line, help_line]).style(Style::default().bg(sb_bg)),
         area,
     );
 }
@@ -431,13 +555,36 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         (KeyEventKind::Press, KeyCode::Up | KeyCode::Char('k')) => app.prev_theme(),
         (KeyEventKind::Press, KeyCode::Tab) => app.next_focus(),
         (KeyEventKind::Press, KeyCode::BackTab) => app.prev_focus(),
+        // Spatial focus via shift+hjkl
+        (KeyEventKind::Press, KeyCode::Char('H')) => {
+            app.focus_direction(FocusDirection::Left);
+        }
+        (KeyEventKind::Press, KeyCode::Char('J')) => {
+            app.focus_direction(FocusDirection::Down);
+        }
+        (KeyEventKind::Press, KeyCode::Char('K')) => {
+            app.focus_direction(FocusDirection::Up);
+        }
+        (KeyEventKind::Press, KeyCode::Char('L')) => {
+            app.focus_direction(FocusDirection::Right);
+        }
         (KeyEventKind::Press, KeyCode::Char('a')) => app.add_panel(),
         (KeyEventKind::Press, KeyCode::Char('d')) => app.remove_panel(),
+        // Swap focused panel with neighbor
+        (KeyEventKind::Press, KeyCode::Char('[')) => app.swap_backward(),
+        (KeyEventKind::Press, KeyCode::Char(']')) => app.swap_forward(),
+        // Resize focused panel boundary
+        (KeyEventKind::Press, KeyCode::Char('+') | KeyCode::Char('=')) => {
+            app.resize_focused(0.05);
+        }
+        (KeyEventKind::Press, KeyCode::Char('-')) => app.resize_focused(-0.05),
         _ => {}
     }
 }
 
 // -- Main loop --
+// Polls with short timeout during animations for smooth 60fps rendering.
+// Blocks on input when idle to avoid burning CPU.
 
 fn main() -> io::Result<()> {
     enable_raw_mode()?;
@@ -450,8 +597,17 @@ fn main() -> io::Result<()> {
     while app.running {
         terminal.draw(|frame| render(frame, &mut app))?;
 
-        // Block for the first event, then drain any queued events to
-        // avoid re-drawing for every intermediate resize.
+        // Animate at ~60fps; block when idle
+        let timeout = match app.is_animating() {
+            true => FRAME_BUDGET,
+            false => Duration::from_secs(60),
+        };
+
+        let has_event = event::poll(timeout).unwrap_or(false);
+        if !has_event {
+            continue;
+        }
+
         let mut ev = event::read()?;
         let mut resized = false;
         loop {
@@ -460,7 +616,7 @@ fn main() -> io::Result<()> {
                 Event::Resize(_, _) => resized = true,
                 _ => {}
             }
-            let has_more = event::poll(std::time::Duration::ZERO).unwrap_or(false);
+            let has_more = event::poll(Duration::ZERO).unwrap_or(false);
             if !has_more {
                 break;
             }
