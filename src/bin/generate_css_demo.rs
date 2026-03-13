@@ -3,9 +3,11 @@ use std::io::Write as _;
 use std::{env, fs, io, path};
 
 use palette_core::color::Color;
+use palette_core::contrast::ContrastLevel;
 use palette_core::css::css_name;
 use palette_core::palette::Palette;
 use palette_core::registry::{Registry, ThemeInfo};
+use palette_core::resolved::ResolvedPalette;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -70,6 +72,42 @@ fn contrast_css(palette: &Palette) -> String {
     out
 }
 
+fn write_resolved_section<'a>(
+    out: &mut String,
+    section: &str,
+    slots: impl Iterator<Item = (&'static str, &'a Color)>,
+) {
+    for (field, color) in slots {
+        let slot = match css_name(section, field) {
+            Some(name) => name.to_string(),
+            None => format!("{section}-{}", field.replace('_', "-")),
+        };
+        let _ = writeln!(out, "  --{slot}: {color};");
+    }
+}
+
+fn resolved_to_css_scoped(resolved: &ResolvedPalette, selector: &str) -> String {
+    let mut decls = String::with_capacity(4096);
+    write_resolved_section(&mut decls, "base", resolved.base.all_slots());
+    write_resolved_section(&mut decls, "semantic", resolved.semantic.all_slots());
+    write_resolved_section(&mut decls, "diff", resolved.diff.all_slots());
+    write_resolved_section(&mut decls, "surface", resolved.surface.all_slots());
+    write_resolved_section(&mut decls, "typography", resolved.typography.all_slots());
+    write_resolved_section(&mut decls, "syntax", resolved.syntax.all_slots());
+    write_resolved_section(&mut decls, "editor", resolved.editor.all_slots());
+    write_resolved_section(&mut decls, "terminal", resolved.terminal_ansi.all_slots());
+    // Contrast text vars for the adjusted palette
+    write_contrast_vars(&mut decls, "base", resolved.base.all_slots());
+    write_contrast_vars(&mut decls, "semantic", resolved.semantic.all_slots());
+    write_contrast_vars(&mut decls, "diff", resolved.diff.all_slots());
+    write_contrast_vars(&mut decls, "surface", resolved.surface.all_slots());
+    write_contrast_vars(&mut decls, "typography", resolved.typography.all_slots());
+    write_contrast_vars(&mut decls, "syntax", resolved.syntax.all_slots());
+    write_contrast_vars(&mut decls, "editor", resolved.editor.all_slots());
+    write_contrast_vars(&mut decls, "terminal", resolved.terminal_ansi.all_slots());
+    format!("{selector} {{\n{decls}}}\n")
+}
+
 fn generate_theme_css(registry: &Registry, info: &ThemeInfo) -> Result<String, Error> {
     let palette = registry
         .load(&info.id)
@@ -78,11 +116,14 @@ fn generate_theme_css(registry: &Registry, info: &ThemeInfo) -> Result<String, E
     let mut css = palette.to_css_scoped(&selector, None);
     // Append contrast text vars inside the same selector
     let vars = contrast_css(&palette);
-    // Insert before closing brace
     match css.rfind('}') {
         Some(pos) => css.insert_str(pos, &vars),
         None => css.push_str(&vars),
     }
+    // WCAG AA-adjusted variant
+    let adjusted = palette.resolve_with_contrast(ContrastLevel::AaNormal);
+    let wcag_selector = format!("[data-wcag][data-theme=\"{}\"]", info.id);
+    css.push_str(&resolved_to_css_scoped(&adjusted, &wcag_selector));
     Ok(css)
 }
 
@@ -135,6 +176,11 @@ fn generate_css(registry: &Registry, themes: &[ThemeInfo]) -> Result<String, Err
     css.push_str(&root_css);
     css.push('\n');
 
+    // -- WCAG AA-adjusted :root default --
+    let adjusted_root = first.resolve_with_contrast(ContrastLevel::AaNormal);
+    css.push_str(&resolved_to_css_scoped(&adjusted_root, "[data-wcag]"));
+    css.push('\n');
+
     // -- Per-theme scoped blocks --
     for info in themes {
         let block = generate_theme_css(registry, info)?;
@@ -184,6 +230,15 @@ body {
   cursor: pointer;
 }
 .header select:focus { outline: 2px solid var(--ui-focus); }
+.wcag-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  margin-left: auto;
+}
+.wcag-toggle input { cursor: pointer; }
 
 /* Grid */
 .grid {
@@ -369,6 +424,10 @@ fn body_content(theme_options: &str) -> String {
     <select id="theme-select">
 {theme_options}
     </select>
+    <label class="wcag-toggle">
+      <input type="checkbox" id="wcag-toggle">
+      <span>WCAG AA</span>
+    </label>
   </header>
   <main class="grid">
 "#
@@ -689,23 +748,27 @@ fn theme_js() -> &'static str {
           if (!hex) { hex = document.createElement('span'); hex.className = 'hex'; el.appendChild(hex); }
           hex.textContent = rgbToHex(bg);
         });
-        document.querySelectorAll('.diff-line').forEach(el => {
-          const bg = getComputedStyle(el).backgroundColor;
-          const fg = getComputedStyle(el).color;
-          if (rgbToHex(bg) === rgbToHex(fg)) {
-            el.style.color = getComputedStyle(el).getPropertyValue('--text-on-diff-modified-bg').trim() || '#fff';
-          }
-        });
       }
       const sel = document.getElementById('theme-select');
+      const wcag = document.getElementById('wcag-toggle');
       const saved = localStorage.getItem('palette-theme');
       if (saved && sel.querySelector(`option[value="${saved}"]`)) {
         sel.value = saved;
         document.documentElement.dataset.theme = saved;
       }
+      if (localStorage.getItem('palette-wcag') === 'true') {
+        wcag.checked = true;
+        document.documentElement.dataset.wcag = '';
+      }
       sel.addEventListener('change', () => {
         document.documentElement.dataset.theme = sel.value;
         localStorage.setItem('palette-theme', sel.value);
+        requestAnimationFrame(() => setTimeout(updateSwatches, 50));
+      });
+      wcag.addEventListener('change', () => {
+        if (wcag.checked) { document.documentElement.dataset.wcag = ''; }
+        else { delete document.documentElement.dataset.wcag; }
+        localStorage.setItem('palette-wcag', wcag.checked);
         requestAnimationFrame(() => setTimeout(updateSwatches, 50));
       });
       requestAnimationFrame(updateSwatches);

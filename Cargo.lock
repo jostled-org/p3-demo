@@ -323,7 +323,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -740,9 +740,9 @@ dependencies = [
 
 [[package]]
 name = "palette-core"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbef3fc0312b89a669d297389cc36ed470f75e15f54c0c2a32a73b3c1f9ac062"
+checksum = "00e7c5e8414e59877b6462c91472b60040801b429060161d3b66bb9c0ab1b04b"
 dependencies = [
  "pastey",
  "ratatui",
@@ -1137,7 +1137,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
