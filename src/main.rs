@@ -1,4 +1,5 @@
-use std::io;
+use std::io::{self, Write as _};
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -6,6 +7,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use palette_core::PaletteError;
 use palette_core::registry::{Registry, ThemeInfo};
 use palette_core::terminal::{ResolvedTerminalTheme, style, to_resolved_terminal_theme};
 use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
@@ -22,6 +24,20 @@ use ratatui::{Frame, Terminal};
 const DEFAULT_PANELS: &[&str] = &["editor", "terminal", "logs"];
 const ANIM_DURATION: Duration = Duration::from_millis(250);
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
+
+// -- Error type --
+
+#[derive(thiserror::Error, Debug)]
+enum Error {
+    #[error("no themes found in registry")]
+    NoThemes,
+    #[error("no presets available")]
+    NoPresets,
+    #[error("failed to load theme '{0}': {1}")]
+    ThemeLoad(Arc<str>, PaletteError),
+    #[error("{0}")]
+    Io(#[from] io::Error),
+}
 
 // -- Preset construction --
 // Each preset is one line: pick a layout, set ratios/gaps, get a runtime.
@@ -53,13 +69,14 @@ fn build_preset(info: &PresetInfo, panels: &[Arc<str>]) -> Option<LayoutRuntime>
             Layout::dashboard(cards).columns(3).gap(1.0).into_runtime()
         }
         "grid" => Layout::grid(3, iter()).gap(1.0).into_runtime(),
-        "split" => Layout::split(
-            Arc::clone(&panels[0]),
-            panels.get(1).map_or_else(|| Arc::from("empty"), Arc::clone),
-        )
-        .ratio(0.5)
-        .gap(1.0)
-        .into_runtime(),
+        "split" => {
+            let first = panels.first().map(Arc::clone)?;
+            let second = panels.get(1).map_or_else(|| Arc::from("empty"), Arc::clone);
+            Layout::split(first, second)
+                .ratio(0.5)
+                .gap(1.0)
+                .into_runtime()
+        }
         "sidebar" => Layout::sidebar("nav", "content")
             .sidebar_width(20.0)
             .gap(1.0)
@@ -86,9 +103,12 @@ fn build_chrome() -> Option<LayoutRuntime> {
 }
 
 // Registry loads any of 30+ built-in themes by id; resolve() fills all color slots.
-fn resolve_theme(registry: &Registry, info: &ThemeInfo) -> ResolvedTerminalTheme {
-    let palette = registry.load(&info.id).unwrap_or_default().resolve();
-    to_resolved_terminal_theme(&palette)
+fn resolve_theme(registry: &Registry, info: &ThemeInfo) -> Result<ResolvedTerminalTheme, Error> {
+    let palette = registry
+        .load(&info.id)
+        .map_err(|e| Error::ThemeLoad(Arc::clone(&info.id), e))?
+        .resolve();
+    Ok(to_resolved_terminal_theme(&palette))
 }
 
 // -- Animation state --
@@ -126,19 +146,25 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
+    fn new() -> Result<Self, Error> {
         // palette-core: discover all installed themes
         let registry = Registry::new();
         let themes: Vec<ThemeInfo> = registry.list().cloned().collect();
-        let theme = resolve_theme(&registry, &themes[0]);
+        if themes.is_empty() {
+            return Err(Error::NoThemes);
+        }
+        let theme = resolve_theme(&registry, &themes[0])?;
 
         // panes: catalog of all 15 built-in presets
         let panels: Vec<Arc<str>> = DEFAULT_PANELS.iter().map(|s| Arc::from(*s)).collect();
         let presets = Layout::presets();
+        if presets.is_empty() {
+            return Err(Error::NoPresets);
+        }
         let runtime = build_preset(&presets[0], &panels);
         let chrome = build_chrome();
 
-        Self {
+        Ok(Self {
             presets,
             preset_idx: 0,
             panels,
@@ -153,7 +179,7 @@ impl App {
             last_frame: None,
             last_area: (0.0, 0.0),
             running: true,
-        }
+        })
     }
 
     fn is_animating(&self) -> bool {
@@ -192,8 +218,8 @@ impl App {
         self.runtime.as_ref().and_then(|rt| rt.focused())
     }
 
-    fn focused_kind(&self) -> Option<String> {
-        self.runtime.as_ref()?.focused_kind().map(String::from)
+    fn focused_kind(&self) -> Option<&str> {
+        self.runtime.as_ref()?.focused_kind()
     }
 
     fn rebuild_current(&mut self) {
@@ -216,12 +242,16 @@ impl App {
 
     fn next_theme(&mut self) {
         self.theme_idx = (self.theme_idx + 1) % self.themes.len();
-        self.theme = resolve_theme(&self.registry, &self.themes[self.theme_idx]);
+        if let Ok(t) = resolve_theme(&self.registry, &self.themes[self.theme_idx]) {
+            self.theme = t;
+        }
     }
 
     fn prev_theme(&mut self) {
         self.theme_idx = (self.theme_idx + self.themes.len() - 1) % self.themes.len();
-        self.theme = resolve_theme(&self.registry, &self.themes[self.theme_idx]);
+        if let Ok(t) = resolve_theme(&self.registry, &self.themes[self.theme_idx]) {
+            self.theme = t;
+        }
     }
 
     fn next_focus(&mut self) {
@@ -258,15 +288,12 @@ impl App {
         let name: Arc<str> = format!("panel-{}", self.next_panel_id).into();
         self.next_panel_id += 1;
         self.panels.push(Arc::clone(&name));
-        match self.runtime.is_some() {
-            true => {
-                self.snapshot_for_animation();
-                let Some(rt) = self.runtime.as_mut() else {
-                    return;
-                };
+        self.snapshot_for_animation();
+        match self.runtime.as_mut() {
+            Some(rt) => {
                 let _ = rt.add_panel(name);
             }
-            false => self.rebuild_current(),
+            None => self.rebuild_current(),
         }
     }
 
@@ -276,8 +303,8 @@ impl App {
         }
         let Some((pid, kind)) = self.runtime.as_ref().and_then(|rt| {
             let pid = rt.focused()?;
-            let kind = rt.focused_kind().map(String::from)?;
-            Some((pid, kind))
+            let kind = rt.focused_kind()?;
+            Some((pid, kind.to_owned()))
         }) else {
             return;
         };
@@ -464,12 +491,20 @@ fn render(frame: &mut Frame, app: &mut App) {
         Err(_) => return,
     };
     let chrome = chrome_frame.layout();
-    let chrome_rects = panes_ratatui::convert(chrome);
 
-    let content_pid = chrome.by_kind("content")[0];
-    let status_pid = chrome.by_kind("status")[0];
-    let layout_area = chrome_rects[&content_pid];
-    let status_area = chrome_rects[&status_pid];
+    // Zero-alloc chrome rect lookup via by_kind + get
+    let mut content_area = None;
+    let mut status_area = None;
+    for entry in panes_ratatui::panels_at(chrome, area) {
+        match entry.kind {
+            "content" => content_area = Some(entry.rect),
+            "status" => status_area = Some(entry.rect),
+            _ => {}
+        }
+    }
+    let (Some(layout_area), Some(status_area)) = (content_area, status_area) else {
+        return;
+    };
 
     let Some(ref mut rt) = app.runtime else {
         let error_style = Style::default()
@@ -533,7 +568,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
 
     let focused_pid = app.focused_pid();
     let focused_kind = app.focused_kind();
-    let focus_text = match (focused_pid, focused_kind.as_deref()) {
+    let focus_text = match (focused_pid, focused_kind) {
         (Some(_), Some(kind)) => kind.to_string(),
         (Some(pid), None) => format!("{pid}"),
         _ => "none".to_string(),
@@ -593,13 +628,13 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
 // Polls with short timeout during animations for smooth 60fps rendering.
 // Blocks on input when idle to avoid burning CPU.
 
-fn main() -> io::Result<()> {
+fn run() -> Result<(), Error> {
     enable_raw_mode()?;
     crossterm::execute!(io::stdout(), EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new()?;
 
     while app.running {
         terminal.draw(|frame| render(frame, &mut app))?;
@@ -610,8 +645,7 @@ fn main() -> io::Result<()> {
             false => Duration::from_secs(60),
         };
 
-        let has_event = event::poll(timeout).unwrap_or(false);
-        if !has_event {
+        if !event::poll(timeout)? {
             continue;
         }
 
@@ -623,14 +657,10 @@ fn main() -> io::Result<()> {
                 Event::Resize(_, _) => resized = true,
                 _ => {}
             }
-            let has_more = event::poll(Duration::ZERO).unwrap_or(false);
-            if !has_more {
+            if !event::poll(Duration::ZERO)? {
                 break;
             }
-            match event::read() {
-                Ok(next) => ev = next,
-                Err(_) => break,
-            }
+            ev = event::read()?;
         }
         if resized {
             terminal.clear()?;
@@ -640,4 +670,14 @@ fn main() -> io::Result<()> {
     disable_raw_mode()?;
     crossterm::execute!(io::stdout(), LeaveAlternateScreen)?;
     Ok(())
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            let _ = writeln!(io::stderr(), "error: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

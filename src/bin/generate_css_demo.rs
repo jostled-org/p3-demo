@@ -2,6 +2,9 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::{env, fs, io, path};
 
+use palette_core::color::Color;
+use palette_core::css::css_name;
+use palette_core::palette::Palette;
 use palette_core::registry::{Registry, ThemeInfo};
 
 // ---------------------------------------------------------------------------
@@ -29,22 +32,65 @@ fn is_light(info: &ThemeInfo) -> bool {
     matches!(s, "light" | "day" | "latte")
 }
 
+fn text_on_color(color: &Color) -> &'static str {
+    match color.relative_luminance() > 0.179 {
+        true => "#000",
+        false => "#fff",
+    }
+}
+
+fn write_contrast_vars<'a>(
+    out: &mut String,
+    section: &str,
+    slots: impl Iterator<Item = (&'static str, &'a Color)>,
+) {
+    for (field, color) in slots {
+        let slot = match css_name(section, field) {
+            Some(name) => name.to_string(),
+            None => format!("{section}-{}", field.replace('_', "-")),
+        };
+        let _ = writeln!(out, "  --text-on-{slot}: {};", text_on_color(color));
+    }
+}
+
+fn contrast_css(palette: &Palette) -> String {
+    let mut out = String::with_capacity(2048);
+    write_contrast_vars(&mut out, "base", palette.base.populated_slots());
+    write_contrast_vars(&mut out, "semantic", palette.semantic.populated_slots());
+    write_contrast_vars(&mut out, "diff", palette.diff.populated_slots());
+    write_contrast_vars(&mut out, "surface", palette.surface.populated_slots());
+    write_contrast_vars(&mut out, "typography", palette.typography.populated_slots());
+    write_contrast_vars(&mut out, "syntax", palette.syntax.populated_slots());
+    write_contrast_vars(&mut out, "editor", palette.editor.populated_slots());
+    write_contrast_vars(
+        &mut out,
+        "terminal",
+        palette.terminal_ansi.populated_slots(),
+    );
+    out
+}
+
 fn generate_theme_css(registry: &Registry, info: &ThemeInfo) -> Result<String, Error> {
     let palette = registry
         .load(&info.id)
         .map_err(|e| Error::ThemeLoad(info.id.to_string(), e))?;
     let selector = format!("[data-theme=\"{}\"]", info.id);
-    Ok(palette.to_css_scoped(&selector, None))
+    let mut css = palette.to_css_scoped(&selector, None);
+    // Append contrast text vars inside the same selector
+    let vars = contrast_css(&palette);
+    // Insert before closing brace
+    match css.rfind('}') {
+        Some(pos) => css.insert_str(pos, &vars),
+        None => css.push_str(&vars),
+    }
+    Ok(css)
 }
 
 fn generate_theme_options(themes: &[ThemeInfo]) -> String {
     let mut dark = Vec::new();
     let mut light = Vec::new();
     for t in themes {
-        let opt = format!(
-            "        <option value=\"{}\">{}</option>",
-            t.id, t.name
-        );
+        let opt = format!("        <option value=\"{}\">{}</option>", t.id, t.name);
         match is_light(t) {
             true => light.push(opt),
             false => dark.push(opt),
@@ -80,7 +126,12 @@ fn generate_css(registry: &Registry, themes: &[ThemeInfo]) -> Result<String, Err
     let first = registry
         .load(&themes[0].id)
         .map_err(|e| Error::ThemeLoad(themes[0].id.to_string(), e))?;
-    let root_css = first.to_css();
+    let mut root_css = first.to_css();
+    let root_vars = contrast_css(&first);
+    match root_css.rfind('}') {
+        Some(pos) => root_css.insert_str(pos, &root_vars),
+        None => root_css.push_str(&root_vars),
+    }
     css.push_str(&root_css);
     css.push('\n');
 
@@ -183,8 +234,6 @@ body {
 }
 .swatch span {
   font-size: 0.55rem;
-  mix-blend-mode: difference;
-  color: white;
   text-align: center;
   line-height: 1.1;
   word-break: break-all;
@@ -268,7 +317,7 @@ pre.code {
 /* ANSI grid */
 .ansi-grid {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
   gap: 4px;
 }
 .ansi-cell {
@@ -281,8 +330,6 @@ pre.code {
 }
 .ansi-cell span {
   font-size: 0.5rem;
-  mix-blend-mode: difference;
-  color: white;
   text-align: center;
 }
 
@@ -304,10 +351,6 @@ pre.code {
   padding: 2px 6px;
   font-size: 0.6rem;
 }
-.editor-swatch span {
-  mix-blend-mode: difference;
-  color: white;
-}
 "#;
 
 // ---------------------------------------------------------------------------
@@ -318,7 +361,9 @@ fn body_content(theme_options: &str) -> String {
     let mut html = String::with_capacity(16 * 1024);
 
     // Header
-    let _ = write!(html, r#"  <header class="header">
+    let _ = write!(
+        html,
+        r#"  <header class="header">
     <h1>palette-core CSS Theme Showcase</h1>
     <label for="theme-select">Theme:</label>
     <select id="theme-select">
@@ -326,36 +371,64 @@ fn body_content(theme_options: &str) -> String {
     </select>
   </header>
   <main class="grid">
-"#);
+"#
+    );
 
     // 1. Base Colors
-    html.push_str(&swatch_card("Base Colors", &[
-        ("--bg", "bg"), ("--bg-dark", "bg-dark"), ("--bg-hi", "bg-hi"),
-        ("--fg", "fg"), ("--fg-dark", "fg-dark"),
-        ("--border", "border"), ("--border-hi", "border-hi"),
-    ]));
+    html.push_str(&swatch_card(
+        "Base Colors",
+        &[
+            ("--bg", "bg"),
+            ("--bg-dark", "bg-dark"),
+            ("--bg-hi", "bg-hi"),
+            ("--fg", "fg"),
+            ("--fg-dark", "fg-dark"),
+            ("--border", "border"),
+            ("--border-hi", "border-hi"),
+        ],
+    ));
 
     // 2. Semantic Colors
-    html.push_str(&swatch_card("Semantic Colors", &[
-        ("--success", "success"), ("--warning", "warning"), ("--error", "error"),
-        ("--info", "info"), ("--hint", "hint"),
-    ]));
+    html.push_str(&swatch_card(
+        "Semantic Colors",
+        &[
+            ("--success", "success"),
+            ("--warning", "warning"),
+            ("--error", "error"),
+            ("--info", "info"),
+            ("--hint", "hint"),
+        ],
+    ));
 
     // 3. Surface Colors
-    html.push_str(&swatch_card("Surface Colors", &[
-        ("--ui-menu", "menu"), ("--ui-sidebar", "sidebar"),
-        ("--ui-statusline", "statusline"), ("--ui-float", "float"),
-        ("--ui-popup", "popup"), ("--ui-overlay", "overlay"),
-        ("--ui-hi", "hi"), ("--ui-sel", "sel"),
-        ("--ui-focus", "focus"), ("--ui-search", "search"),
-    ]));
+    html.push_str(&swatch_card(
+        "Surface Colors",
+        &[
+            ("--ui-menu", "menu"),
+            ("--ui-sidebar", "sidebar"),
+            ("--ui-statusline", "statusline"),
+            ("--ui-float", "float"),
+            ("--ui-popup", "popup"),
+            ("--ui-overlay", "overlay"),
+            ("--ui-hi", "hi"),
+            ("--ui-sel", "sel"),
+            ("--ui-focus", "focus"),
+            ("--ui-search", "search"),
+        ],
+    ));
 
     // 4. Typography
-    html.push_str(&swatch_card("Typography", &[
-        ("--text-comment", "comment"), ("--text-gutter", "gutter"),
-        ("--text-line-num", "line-num"), ("--text-sel", "sel"),
-        ("--text-link", "link"), ("--text-title", "title"),
-    ]));
+    html.push_str(&swatch_card(
+        "Typography",
+        &[
+            ("--text-comment", "comment"),
+            ("--text-gutter", "gutter"),
+            ("--text-line-num", "line-num"),
+            ("--text-sel", "sel"),
+            ("--text-link", "link"),
+            ("--text-title", "title"),
+        ],
+    ));
 
     // 5. Syntax Highlighting
     html.push_str(&syntax_card());
@@ -375,11 +448,15 @@ fn body_content(theme_options: &str) -> String {
 
 fn swatch_card(title: &str, swatches: &[(&str, &str)]) -> String {
     let mut html = String::new();
-    let _ = write!(html, "    <section class=\"card\">\n      <h2>{title}</h2>\n      <div class=\"swatches\">\n");
+    let _ = write!(
+        html,
+        "    <section class=\"card\">\n      <h2>{title}</h2>\n      <div class=\"swatches\">\n"
+    );
     for (var, label) in swatches {
+        let text_var = var.replace("--", "--text-on-");
         let _ = writeln!(
             html,
-            "        <div class=\"swatch\" style=\"background: var({var});\"><span>{label}</span></div>"
+            "        <div class=\"swatch\" style=\"background: var({var}); color: var({text_var});\"><span>{label}</span></div>"
         );
     }
     html.push_str("      </div>\n    </section>\n");
@@ -387,7 +464,9 @@ fn swatch_card(title: &str, swatches: &[(&str, &str)]) -> String {
 }
 
 fn syntax_card() -> String {
-    let mut html = String::from("    <section class=\"card\" style=\"grid-column: 1 / -1;\">\n      <h2>Syntax Highlighting</h2>\n");
+    let mut html = String::from(
+        "    <section class=\"card\" style=\"grid-column: 1 / -1;\">\n      <h2>Syntax Highlighting</h2>\n",
+    );
     html.push_str(&code_snippet());
     html.push_str("      <h2 style=\"margin-top: 1rem;\">HTML Tags</h2>\n");
     html.push_str(&html_snippet());
@@ -465,41 +544,57 @@ fn editor_card() -> String {
     let mut html = String::from("    <section class=\"card\">\n      <h2>Editor</h2>\n");
 
     let groups: &[(&str, &[(&str, &str)])] = &[
-        ("Cursor & Selection", &[
-            ("--ed-cursor", "cursor"),
-            ("--ed-cursor-text", "cursor-text"),
-            ("--ed-match-paren", "paren"),
-            ("--ed-sel-bg", "sel-bg"),
-            ("--ed-sel-fg", "sel-fg"),
-        ]),
-        ("Search", &[
-            ("--ed-search-bg", "search-bg"),
-            ("--ed-search-fg", "search-fg"),
-        ]),
-        ("Hints", &[
-            ("--ed-hint-bg", "hint-bg"),
-            ("--ed-hint-fg", "hint-fg"),
-        ]),
-        ("Diagnostics", &[
-            ("--ed-diag-error", "error"),
-            ("--ed-diag-warn", "warn"),
-            ("--ed-diag-info", "info"),
-            ("--ed-diag-hint", "hint"),
-        ]),
-        ("Diagnostic Underlines", &[
-            ("--ed-diag-ul-error", "ul-error"),
-            ("--ed-diag-ul-warn", "ul-warn"),
-            ("--ed-diag-ul-info", "ul-info"),
-            ("--ed-diag-ul-hint", "ul-hint"),
-        ]),
+        (
+            "Cursor & Selection",
+            &[
+                ("--ed-cursor", "cursor"),
+                ("--ed-cursor-text", "cursor-text"),
+                ("--ed-match-paren", "paren"),
+                ("--ed-sel-bg", "sel-bg"),
+                ("--ed-sel-fg", "sel-fg"),
+            ],
+        ),
+        (
+            "Search",
+            &[
+                ("--ed-search-bg", "search-bg"),
+                ("--ed-search-fg", "search-fg"),
+            ],
+        ),
+        (
+            "Hints",
+            &[("--ed-hint-bg", "hint-bg"), ("--ed-hint-fg", "hint-fg")],
+        ),
+        (
+            "Diagnostics",
+            &[
+                ("--ed-diag-error", "error"),
+                ("--ed-diag-warn", "warn"),
+                ("--ed-diag-info", "info"),
+                ("--ed-diag-hint", "hint"),
+            ],
+        ),
+        (
+            "Diagnostic Underlines",
+            &[
+                ("--ed-diag-ul-error", "ul-error"),
+                ("--ed-diag-ul-warn", "ul-warn"),
+                ("--ed-diag-ul-info", "ul-info"),
+                ("--ed-diag-ul-hint", "ul-hint"),
+            ],
+        ),
     ];
 
     for (label, swatches) in groups {
-        let _ = write!(html, "      <p style=\"font-size:0.75rem; color:var(--text-comment); margin:0.5rem 0 0.25rem;\">{label}</p>\n      <div class=\"editor-row\">\n");
+        let _ = write!(
+            html,
+            "      <p style=\"font-size:0.75rem; color:var(--text-comment); margin:0.5rem 0 0.25rem;\">{label}</p>\n      <div class=\"editor-row\">\n"
+        );
         for (var, name) in *swatches {
+            let text_var = var.replace("--", "--text-on-");
             let _ = writeln!(
                 html,
-                "        <div class=\"editor-swatch\" style=\"background: var({var});\"><span>{name}</span></div>"
+                "        <div class=\"editor-swatch\" style=\"background: var({var}); color: var({text_var});\"><span>{name}</span></div>"
             );
         }
         html.push_str("      </div>\n");
@@ -524,15 +619,23 @@ fn diff_card() -> String {
     // Diff swatches
     html.push_str("      <div class=\"swatches\" style=\"margin-top: 0.75rem;\">\n");
     let vars = [
-        ("--diff-added", "added"), ("--diff-added-bg", "add-bg"), ("--diff-added-fg", "add-fg"),
-        ("--diff-modified", "mod"), ("--diff-modified-bg", "mod-bg"), ("--diff-modified-fg", "mod-fg"),
-        ("--diff-removed", "removed"), ("--diff-removed-bg", "rm-bg"), ("--diff-removed-fg", "rm-fg"),
-        ("--diff-text-bg", "text-bg"), ("--diff-ignored", "ignored"),
+        ("--diff-added", "added"),
+        ("--diff-added-bg", "add-bg"),
+        ("--diff-added-fg", "add-fg"),
+        ("--diff-modified", "mod"),
+        ("--diff-modified-bg", "mod-bg"),
+        ("--diff-modified-fg", "mod-fg"),
+        ("--diff-removed", "removed"),
+        ("--diff-removed-bg", "rm-bg"),
+        ("--diff-removed-fg", "rm-fg"),
+        ("--diff-text-bg", "text-bg"),
+        ("--diff-ignored", "ignored"),
     ];
     for (var, label) in vars {
+        let text_var = var.replace("--", "--text-on-");
         let _ = writeln!(
             html,
-            "        <div class=\"swatch\" style=\"background: var({var});\"><span>{label}</span></div>"
+            "        <div class=\"swatch\" style=\"background: var({var}); color: var({text_var});\"><span>{label}</span></div>"
         );
     }
     html.push_str("      </div>\n");
@@ -545,19 +648,21 @@ fn ansi_card() -> String {
     let mut html = String::from("    <section class=\"card\">\n      <h2>ANSI Terminal</h2>\n");
     html.push_str("      <div class=\"ansi-grid\">\n");
 
-    let colors = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+    let colors = [
+        "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    ];
     // Normal row
     for c in &colors {
         let _ = writeln!(
             html,
-            "        <div class=\"ansi-cell\" style=\"background: var(--ansi-{c});\"><span>{c}</span></div>"
+            "        <div class=\"ansi-cell\" style=\"background: var(--ansi-{c}); color: var(--text-on-ansi-{c});\"><span>{c}</span></div>"
         );
     }
     // Bright row
     for c in &colors {
         let _ = writeln!(
             html,
-            "        <div class=\"ansi-cell\" style=\"background: var(--ansi-bright-{c});\"><span>br-{c}</span></div>"
+            "        <div class=\"ansi-cell\" style=\"background: var(--ansi-bright-{c}); color: var(--text-on-ansi-bright-{c});\"><span>br-{c}</span></div>"
         );
     }
 
@@ -577,11 +682,19 @@ fn theme_js() -> &'static str {
         if (!m) return '';
         return '#' + m.slice(0,3).map(x => (+x).toString(16).padStart(2,'0')).join('');
       }
-      function updateHex() {
+      function updateSwatches() {
         document.querySelectorAll('.swatch, .editor-swatch, .ansi-cell').forEach(el => {
+          const bg = getComputedStyle(el).backgroundColor;
           let hex = el.querySelector('.hex');
           if (!hex) { hex = document.createElement('span'); hex.className = 'hex'; el.appendChild(hex); }
-          hex.textContent = rgbToHex(getComputedStyle(el).backgroundColor);
+          hex.textContent = rgbToHex(bg);
+        });
+        document.querySelectorAll('.diff-line').forEach(el => {
+          const bg = getComputedStyle(el).backgroundColor;
+          const fg = getComputedStyle(el).color;
+          if (rgbToHex(bg) === rgbToHex(fg)) {
+            el.style.color = getComputedStyle(el).getPropertyValue('--text-on-diff-modified-bg').trim() || '#fff';
+          }
         });
       }
       const sel = document.getElementById('theme-select');
@@ -593,9 +706,9 @@ fn theme_js() -> &'static str {
       sel.addEventListener('change', () => {
         document.documentElement.dataset.theme = sel.value;
         localStorage.setItem('palette-theme', sel.value);
-        requestAnimationFrame(() => setTimeout(updateHex, 50));
+        requestAnimationFrame(() => setTimeout(updateSwatches, 50));
       });
-      requestAnimationFrame(updateHex);
+      requestAnimationFrame(updateSwatches);
     </script>"##
 }
 
