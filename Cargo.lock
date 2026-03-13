@@ -771,6 +771,7 @@ dependencies = [
  "panes",
  "panes-ratatui",
  "ratatui",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

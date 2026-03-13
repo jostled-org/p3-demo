@@ -4,12 +4,21 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[[bin]]
+name = "panes-demo"
+path = "src/main.rs"
+
+[[bin]]
+name = "generate-css-demo"
+path = "src/bin/generate_css_demo.rs"
+
 [dependencies]
 panes = "0.11"
 panes-ratatui = "0.4.1"
 palette-core = { version = "0.8", features = ["terminal"] }
 ratatui = "0.30"
 crossterm = "0.28"
+thiserror = "2"
 
 [workspace]
 
