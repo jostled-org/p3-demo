@@ -4,6 +4,13 @@ Demo showcase for [panes](https://github.com/jostled-org/panes) and [palette-cor
 
 **panes** is a renderer-agnostic layout engine with declarative ergonomics. **palette-core** is a structured color palette library with 30+ built-in themes. Both are available on [crates.io](https://crates.io).
 
+## Demos
+
+| Demo | Description | Link |
+|------|-------------|------|
+| Terminal | Interactive ratatui layout explorer | `cargo run` |
+| CSS Showcase | All palette-core themes as CSS custom properties | [Live](https://jostled-org.github.io/p3-demo/) |
+
 ## Terminal demo
 
 The terminal demo uses ratatui to render an interactive layout explorer.

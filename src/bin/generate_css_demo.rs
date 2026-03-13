@@ -196,9 +196,12 @@ const COMPONENT_CSS: &str = r#"
 
 body {
   font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background: var(--bg);
+  background-image: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--ui-focus) 3%, transparent) 0%, transparent 70%);
   color: var(--fg);
-  transition: background 0.3s, color 0.3s;
+  transition: background 0.3s, color 0.3s, background-image 0.3s ease;
   line-height: 1.5;
 }
 
@@ -208,8 +211,12 @@ body {
   top: 0;
   z-index: 100;
   background: var(--ui-statusline);
+  background: color-mix(in srgb, var(--ui-statusline) 80%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
-  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding: 1rem 1.5rem;
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -217,7 +224,8 @@ body {
 }
 .header h1 {
   font-size: 1.1rem;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--text-title);
 }
 .header select {
@@ -238,7 +246,41 @@ body {
   cursor: pointer;
   margin-left: auto;
 }
-.wcag-toggle input { cursor: pointer; }
+.wcag-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.toggle-track {
+  width: 36px;
+  height: 20px;
+  background: var(--border-hi);
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.25s;
+  flex-shrink: 0;
+}
+.toggle-knob {
+  width: 16px;
+  height: 16px;
+  background: var(--fg);
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.25s;
+}
+.wcag-toggle input:checked + .toggle-track {
+  background: var(--ui-focus);
+}
+.wcag-toggle input:checked + .toggle-track .toggle-knob {
+  transform: translateX(16px);
+}
+.wcag-toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
 
 /* Grid */
 .grid {
@@ -253,14 +295,24 @@ body {
 /* Cards */
 .card {
   background: var(--bg-dark);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   padding: 1.25rem;
-  transition: background 0.3s, border-color 0.3s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
+  transition: background 0.3s, border-color 0.3s, transform 0.25s ease, box-shadow 0.25s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12), 0 8px 24px rgba(0,0,0,0.08);
+}
+@media (prefers-reduced-motion: reduce) {
+  .card { transition: background 0.3s, border-color 0.3s; }
+  .card:hover { transform: none; }
 }
 .card h2 {
-  font-size: 0.95rem;
+  font-size: 1.1rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text-title);
   margin-bottom: 0.75rem;
   padding-bottom: 0.5rem;
@@ -274,12 +326,11 @@ body {
   gap: 0.5rem;
 }
 .swatch {
-  width: 72px;
-  height: 56px;
-  border-radius: 4px;
-  border: 1px solid rgba(128,128,128,0.4);
-  outline: 1px solid rgba(128,128,128,0.15);
-  outline-offset: 1px;
+  width: 88px;
+  height: 64px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -295,20 +346,27 @@ body {
 }
 .swatch .hex {
   font-size: 0.5rem;
-  opacity: 0.85;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s, transform 0.2s;
   font-family: monospace;
+}
+.swatch:hover .hex {
+  opacity: 0.9;
+  transform: translateY(0);
 }
 
 /* Code block */
 pre.code {
   background: var(--bg-dark);
-  border: 1px solid var(--border);
+  border: none;
+  border-left: 3px solid var(--ui-focus);
   border-radius: 6px;
-  padding: 1rem;
+  padding: 1rem 1rem 1rem 1.25rem;
   overflow-x: auto;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   font-size: 0.8rem;
-  line-height: 1.6;
+  line-height: 1.7;
   tab-size: 4;
 }
 
@@ -406,6 +464,11 @@ pre.code {
   padding: 2px 6px;
   font-size: 0.6rem;
 }
+
+/* Full-width cards */
+@media (min-width: 800px) {
+  .card-wide { grid-column: 1 / -1; }
+}
 "#;
 
 // ---------------------------------------------------------------------------
@@ -426,6 +489,7 @@ fn body_content(theme_options: &str) -> String {
     </select>
     <label class="wcag-toggle">
       <input type="checkbox" id="wcag-toggle">
+      <span class="toggle-track"><span class="toggle-knob"></span></span>
       <span>WCAG AA</span>
     </label>
   </header>
@@ -524,7 +588,7 @@ fn swatch_card(title: &str, swatches: &[(&str, &str)]) -> String {
 
 fn syntax_card() -> String {
     let mut html = String::from(
-        "    <section class=\"card\" style=\"grid-column: 1 / -1;\">\n      <h2>Syntax Highlighting</h2>\n",
+        "    <section class=\"card card-wide\">\n      <h2>Syntax Highlighting</h2>\n",
     );
     html.push_str(&code_snippet());
     html.push_str("      <h2 style=\"margin-top: 1rem;\">HTML Tags</h2>\n");
@@ -664,7 +728,7 @@ fn editor_card() -> String {
 }
 
 fn diff_card() -> String {
-    let mut html = String::from("    <section class=\"card\">\n      <h2>Diff</h2>\n");
+    let mut html = String::from("    <section class=\"card card-wide\">\n      <h2>Diff</h2>\n");
 
     // Mock diff hunk
     html.push_str("      <div class=\"diff-hunk\">\n");
@@ -704,7 +768,8 @@ fn diff_card() -> String {
 }
 
 fn ansi_card() -> String {
-    let mut html = String::from("    <section class=\"card\">\n      <h2>ANSI Terminal</h2>\n");
+    let mut html =
+        String::from("    <section class=\"card card-wide\">\n      <h2>ANSI Terminal</h2>\n");
     html.push_str("      <div class=\"ansi-grid\">\n");
 
     let colors = [
