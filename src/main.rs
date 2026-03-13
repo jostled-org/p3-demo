@@ -236,10 +236,17 @@ impl App {
         }
     }
 
-    // Spatial focus: move to nearest panel in a direction
+    // Spatial focus: move to nearest panel in a direction.
+    // Falls back to sequential focus for presets that hide panels (monocle, deck).
     fn focus_direction(&mut self, dir: FocusDirection) {
-        if let Some(rt) = &mut self.runtime {
-            rt.focus_direction_current(dir);
+        let Some(rt) = &mut self.runtime else { return };
+        let spatial_ok = rt.focus_direction_current(dir).is_ok();
+        if spatial_ok {
+            return;
+        }
+        match dir {
+            FocusDirection::Right | FocusDirection::Down => rt.focus_next(),
+            FocusDirection::Left | FocusDirection::Up => rt.focus_prev(),
         }
     }
 

@@ -5,9 +5,9 @@ edition = "2024"
 publish = false
 
 [dependencies]
-panes = "0.10"
-panes-ratatui = "0.4"
-palette-core = { version = "0.7", features = ["terminal"] }
+panes = "0.11"
+panes-ratatui = "0.4.1"
+palette-core = { version = "0.8", features = ["terminal"] }
 ratatui = "0.30"
 crossterm = "0.28"
 
