@@ -1,4 +1,4 @@
-import init, { JsLayoutEngine, layoutPresets, JsRegistry } from './pkg/panes_wasm_demo.js';
+import init, { JsLayoutEngine, layoutPresets, themeList, themeCss } from './pkg/panes_wasm_demo.js';
 
 const ANIM_MS = 250;
 
@@ -17,7 +17,6 @@ function accentColor(kindIndex) {
 
 const state = {
   engine: null,
-  registry: null,
   themes: [],
   themeIdx: 0,
   presets: [],
@@ -39,7 +38,7 @@ const stTheme = document.getElementById('st-theme');
 const stPanels = document.getElementById('st-panels');
 const stFocus = document.getElementById('st-focus');
 const stDiff = document.getElementById('st-diff');
-const themeCss = document.getElementById('theme-css');
+const themeCssEl = document.getElementById('theme-css');
 
 // -- Easing --
 
@@ -56,9 +55,7 @@ function lerp(a, b, t) {
 
 function applyTheme() {
   const info = state.themes[state.themeIdx];
-  const palette = state.registry.load(info.id());
-  themeCss.textContent = palette.toCss();
-  palette.free();
+  themeCssEl.textContent = themeCss(info.id);
 }
 
 // -- Rendering --
@@ -129,7 +126,7 @@ function updateStatus() {
   presetDesc.textContent = preset.description;
 
   const theme = state.themes[state.themeIdx];
-  stTheme.textContent = `theme: ${theme.name()}`;
+  stTheme.textContent = `theme: ${theme.name}`;
 
   const dynamic = state.engine.is_dynamic();
   stPanels.textContent = dynamic ? `panels: ${state.engine.panel_count()}` : '[fixed]';
@@ -217,13 +214,13 @@ function handleKey(e) {
     case 'ArrowDown':
       state.themeIdx = (state.themeIdx + 1) % state.themes.length;
       applyTheme();
-      themeSelect.value = state.themes[state.themeIdx].id();
+      themeSelect.value = state.themes[state.themeIdx].id;
       render();
       break;
     case 'ArrowUp':
       state.themeIdx = (state.themeIdx + state.themes.length - 1) % state.themes.length;
       applyTheme();
-      themeSelect.value = state.themes[state.themeIdx].id();
+      themeSelect.value = state.themes[state.themeIdx].id;
       render();
       break;
     case 'Tab':
@@ -297,15 +294,15 @@ function setupSelects() {
 
   for (const t of state.themes) {
     const opt = document.createElement('option');
-    opt.value = t.id();
-    opt.textContent = `${t.name()} [${t.style()}]`;
+    opt.value = t.id;
+    opt.textContent = `${t.name} [${t.style}]`;
     themeSelect.appendChild(opt);
   }
-  themeSelect.value = state.themes[state.themeIdx].id();
+  themeSelect.value = state.themes[state.themeIdx].id;
 
   themeSelect.addEventListener('change', () => {
     const id = themeSelect.value;
-    const idx = state.themes.findIndex(t => t.id() === id);
+    const idx = state.themes.findIndex(t => t.id === id);
     if (idx < 0) return;
     state.themeIdx = idx;
     applyTheme();
@@ -321,8 +318,7 @@ async function main() {
   state.presets = JSON.parse(layoutPresets());
   state.engine = new JsLayoutEngine(state.presets[0].name);
 
-  state.registry = new JsRegistry();
-  state.themes = state.registry.list();
+  state.themes = JSON.parse(themeList());
   applyTheme();
 
   setupSelects();
