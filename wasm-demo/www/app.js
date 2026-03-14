@@ -89,10 +89,10 @@ function syncPanels(panels, progress) {
       viewport.appendChild(el);
     }
 
-    // Interpolate position during animation (keyed by sequence index)
+    // Interpolate position during animation (keyed by panel ID)
     let x = p.x, y = p.y, w = p.w, h = p.h;
     if (progress !== null && state.prevRects) {
-      const prev = state.prevRects.get(i);
+      const prev = state.prevRects.get(key);
       if (prev) {
         const t = easeOutCubic(progress);
         x = lerp(prev.x, p.x, t);
@@ -173,12 +173,10 @@ function render() {
 function snapshotRects() {
   const panels = resolveLayout();
   if (!panels) return null;
-  // Key by sequence index, not panel ID — IDs reset across preset switches
-  // but sequence position is stable for lerp (same approach as terminal demo)
   const map = new Map();
-  panels.forEach((p, i) => {
-    map.set(i, { x: p.x, y: p.y, w: p.w, h: p.h });
-  });
+  for (const p of panels) {
+    map.set(String(p.id), { x: p.x, y: p.y, w: p.w, h: p.h });
+  }
   return map;
 }
 
