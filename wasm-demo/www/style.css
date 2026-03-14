@@ -1,0 +1,141 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg, #1e1e2e);
+  color: var(--fg, #cdd6f4);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--ui-statusline, #181825);
+  border-bottom: 1px solid var(--border, #313244);
+  flex-shrink: 0;
+}
+
+header h1 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--info, #89b4fa);
+}
+
+header label {
+  font-size: 0.75rem;
+  color: var(--text-comment, #6c7086);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+header select {
+  font-size: 0.75rem;
+  background: var(--bg, #1e1e2e);
+  color: var(--fg, #cdd6f4);
+  border: 1px solid var(--border, #313244);
+  border-radius: 4px;
+  padding: 0.15rem 0.25rem;
+}
+
+#preset-desc {
+  font-size: 0.75rem;
+  color: var(--text-comment, #6c7086);
+  font-style: italic;
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+}
+
+.panel {
+  position: absolute;
+  border: 1px solid var(--border, #313244);
+  border-radius: 6px;
+  background: var(--bg, #1e1e2e);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: none;
+}
+
+.panel.focused {
+  border-color: var(--ui-focus, #89b4fa);
+  border-width: 2px;
+  z-index: 10;
+}
+
+.panel-title {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  border-bottom: 1px solid var(--border, #313244);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel.focused .panel-title {
+  font-weight: 700;
+}
+
+.panel-body {
+  flex: 1;
+  padding: 0.5rem;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.65rem;
+  color: var(--text-comment, #6c7086);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+footer {
+  flex-shrink: 0;
+  background: var(--ui-statusline, #181825);
+  border-top: 1px solid var(--border, #313244);
+  padding: 0.25rem 1rem;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.7rem;
+}
+
+#status-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+#status-line .sep {
+  color: var(--border, #313244);
+}
+
+#st-preset { color: var(--info, #89b4fa); }
+#st-theme { color: var(--success, #a6e3a1); }
+#st-panels { color: var(--warning, #f9e2af); }
+#st-focus { color: var(--warning, #f9e2af); }
+#st-diff { color: var(--text-comment, #6c7086); }
+
+#help-line {
+  color: var(--text-comment, #6c7086);
+  font-size: 0.65rem;
+  margin-top: 0.15rem;
+}

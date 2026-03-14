@@ -255,6 +255,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
 
 [[package]]
+name = "demo-presets"
+version = "0.0.0"
+dependencies = [
+ "panes",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -323,7 +330,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -744,11 +751,14 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00e7c5e8414e59877b6462c91472b60040801b429060161d3b66bb9c0ab1b04b"
 dependencies = [
+ "js-sys",
  "pastey",
  "ratatui",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -767,6 +777,7 @@ name = "panes-demo"
 version = "0.0.0"
 dependencies = [
  "crossterm 0.28.1",
+ "demo-presets",
  "palette-core",
  "panes",
  "panes-ratatui",
@@ -783,6 +794,31 @@ dependencies = [
  "panes",
  "ratatui",
  "rustc-hash",
+]
+
+[[package]]
+name = "panes-wasm"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "546aefd94d5fa0607102474cb67229d61a0a22b2adb1f5ca22f427d361540ad3"
+dependencies = [
+ "panes",
+ "rustc-hash",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "panes-wasm-demo"
+version = "0.0.0"
+dependencies = [
+ "demo-presets",
+ "palette-core",
+ "panes",
+ "panes-wasm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1137,7 +1173,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

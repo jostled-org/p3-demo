@@ -18,9 +18,11 @@ panes-ratatui = "0.4.1"
 palette-core = { version = "0.8", features = ["terminal"] }
 ratatui = "0.30"
 crossterm = "0.28"
+demo-presets = { path = "demo-presets" }
 thiserror = "2"
 
 [workspace]
+members = ["demo-presets", "wasm-demo"]
 
 [lints.clippy]
 unwrap_used = "deny"

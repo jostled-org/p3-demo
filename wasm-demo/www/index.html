@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>panes WASM demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>panes</h1>
+    <label>
+      preset
+      <select id="preset-select"></select>
+    </label>
+    <label>
+      theme
+      <select id="theme-select"></select>
+    </label>
+    <span id="preset-desc"></span>
+  </header>
+
+  <main>
+    <div id="viewport"></div>
+  </main>
+
+  <footer>
+    <div id="status-line">
+      <span id="st-preset"></span>
+      <span class="sep">|</span>
+      <span id="st-theme"></span>
+      <span class="sep">|</span>
+      <span id="st-panels"></span>
+      <span class="sep">|</span>
+      <span id="st-focus"></span>
+      <span class="sep">|</span>
+      <span id="st-diff"></span>
+    </div>
+    <div id="help-line">
+      &larr;/&rarr; preset &middot; &uarr;/&darr; theme &middot; Tab focus &middot; Shift+HJKL spatial &middot; a/d add/rm &middot; [/] swap &middot; +/- resize
+    </div>
+  </footer>
+
+  <style id="theme-css"></style>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

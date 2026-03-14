@@ -10,6 +10,7 @@ Demo showcase for [panes](https://github.com/jostled-org/panes) and [palette-cor
 |------|-------------|------|
 | Terminal | Interactive ratatui layout explorer | `cargo run` |
 | CSS Showcase | All palette-core themes as CSS custom properties | [Live](https://jostled-org.github.io/p3-demo/) |
+| WASM | Interactive panes layout engine in the browser | [Live](https://jostled-org.github.io/p3-demo/wasm/) |
 
 ## Terminal demo
 

@@ -1,0 +1,14 @@
+[package]
+name = "demo-presets"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+panes = "0.11"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"

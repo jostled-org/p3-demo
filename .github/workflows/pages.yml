@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - uses: actions/cache@v4
         with:
@@ -30,7 +32,16 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
+      - run: curl -sSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
       - run: cargo run --release --bin generate-css-demo -- _site/index.html
+
+      - run: cd wasm-demo && wasm-pack build --target web --out-dir pkg --no-typescript
+
+      - run: |
+          mkdir -p _site/wasm
+          cp wasm-demo/www/* _site/wasm/
+          cp -r wasm-demo/pkg _site/wasm/pkg
 
       - uses: actions/upload-pages-artifact@v4
         with:
