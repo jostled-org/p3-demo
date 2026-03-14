@@ -169,6 +169,16 @@ impl JsLayoutEngine {
         let _ = self.runtime.resize_boundary(pid, delta);
     }
 
+    pub fn toggle_collapsed(&mut self) -> Result<(), JsValue> {
+        let Some(pid) = self.runtime.focused() else {
+            return Ok(());
+        };
+        self.runtime
+            .toggle_collapsed(pid)
+            .map_err(EngineError::from)?;
+        Ok(())
+    }
+
     pub fn is_dynamic(&self) -> bool {
         self.presets[self.preset_idx].input == PanelInputKind::DynamicList
     }

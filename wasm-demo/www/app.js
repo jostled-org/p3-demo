@@ -253,6 +253,9 @@ function handleKey(e) {
         animatedAction(() => eng.remove_panel());
       }
       break;
+    case 'c':
+      animatedAction(() => eng.toggle_collapsed());
+      break;
     case '[':
       animatedAction(() => eng.swap_prev());
       break;
