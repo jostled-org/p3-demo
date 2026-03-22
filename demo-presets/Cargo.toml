@@ -5,7 +5,12 @@ edition = "2024"
 publish = false
 
 [dependencies]
-panes = "0.11"
+panes = { version = "0.15", features = ["serde"] }
+palette-core = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+taffy = "0.9"
+thiserror = "2"
 
 [lints.clippy]
 unwrap_used = "deny"

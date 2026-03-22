@@ -1,17 +1,19 @@
 use std::io::{self, Write as _};
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use palette_core::PaletteError;
-use palette_core::registry::{Registry, ThemeInfo};
+use demo_presets::{
+    Action, DemoError, DemoState, HELP_BINDINGS_TUI, build_chrome, ease_out, format_diff_counts,
+    load_snapshot, save_snapshot, status_data,
+};
 use palette_core::terminal::{ResolvedTerminalTheme, style, to_resolved_terminal_theme};
 use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
-use panes::{FocusDirection, Layout, PanelId, PanelInputKind, PresetInfo, ResolvedLayout, fixed};
+use panes::{FocusDirection, OverlayEntry, ResolvedLayout};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -21,48 +23,18 @@ use ratatui::{Frame, Terminal};
 
 // -- Constants --
 
-const DEFAULT_PANELS: &[&str] = &["editor", "terminal", "logs"];
-const ANIM_DURATION: Duration = Duration::from_millis(250);
+const ANIM_DURATION: Duration =
+    Duration::from_millis((demo_presets::ANIM_DURATION_SECS * 1000.0) as u64);
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
 // -- Error type --
 
 #[derive(thiserror::Error, Debug)]
 enum Error {
-    #[error("no themes found in registry")]
-    NoThemes,
-    #[error("no presets available")]
-    NoPresets,
-    #[error("failed to load theme '{0}': {1}")]
-    ThemeLoad(Arc<str>, PaletteError),
+    #[error("{0}")]
+    Demo(#[from] DemoError),
     #[error("{0}")]
     Io(#[from] io::Error),
-}
-
-// -- Preset construction --
-// Each preset is one line: pick a layout, set ratios/gaps, get a runtime.
-
-fn build_preset(info: &PresetInfo, panels: &[Arc<str>]) -> Option<LayoutRuntime> {
-    demo_presets::build_preset(info, panels)
-}
-
-// Custom layout via builder: content area grows, status bar is fixed height.
-fn build_chrome() -> Option<LayoutRuntime> {
-    let layout = Layout::build_col(|c| {
-        c.panel("content");
-        c.panel_with("status", fixed(3.0));
-    })
-    .ok()?;
-    Some(LayoutRuntime::new(layout.into()))
-}
-
-// Registry loads any of 30+ built-in themes by id; resolve() fills all color slots.
-fn resolve_theme(registry: &Registry, info: &ThemeInfo) -> Result<ResolvedTerminalTheme, Error> {
-    let palette = registry
-        .load(&info.id)
-        .map_err(|e| Error::ThemeLoad(Arc::clone(&info.id), e))?
-        .resolve();
-    Ok(to_resolved_terminal_theme(&palette))
 }
 
 // -- Animation state --
@@ -74,65 +46,42 @@ struct Animation {
     buf: Vec<Option<panes::Rect>>,
 }
 
-// Ease-out cubic for snappy, decelerating motion
-fn ease_out(t: f32) -> f32 {
-    let inv = 1.0 - t;
-    1.0 - inv * inv * inv
-}
-
 // -- App state --
 
 struct App {
-    presets: &'static [PresetInfo],
-    preset_idx: usize,
-    panels: Vec<Arc<str>>,
-    next_panel_id: usize,
-    runtime: Option<LayoutRuntime>,
+    state: DemoState,
     chrome: Option<LayoutRuntime>,
-    registry: Registry,
-    themes: Vec<ThemeInfo>,
-    theme_idx: usize,
     theme: ResolvedTerminalTheme,
     animation: Option<Animation>,
     last_frame: Option<PanesFrame>,
     last_area: (f32, f32),
     running: bool,
+    /// Cached status-bar help line (static content, built once)
+    cached_help_line: Box<str>,
+    /// Cached help overlay lines (static text, styled per-frame with theme colors)
+    cached_overlay_lines: Box<[Box<str>]>,
 }
 
 impl App {
     fn new() -> Result<Self, Error> {
-        // palette-core: discover all installed themes
-        let registry = Registry::new();
-        let themes: Vec<ThemeInfo> = registry.list().cloned().collect();
-        if themes.is_empty() {
-            return Err(Error::NoThemes);
-        }
-        let theme = resolve_theme(&registry, &themes[0])?;
-
-        // panes: catalog of all 15 built-in presets
-        let panels: Vec<Arc<str>> = DEFAULT_PANELS.iter().map(|s| Arc::from(*s)).collect();
-        let presets = Layout::presets();
-        if presets.is_empty() {
-            return Err(Error::NoPresets);
-        }
-        let runtime = build_preset(&presets[0], &panels);
+        let state = DemoState::new(1.0)?;
+        let palette = state.load_current_palette()?;
+        let theme = to_resolved_terminal_theme(&palette.resolve());
         let chrome = build_chrome();
 
+        let cached_help_line = build_help_line();
+        let cached_overlay_lines = build_overlay_lines();
+
         Ok(Self {
-            presets,
-            preset_idx: 0,
-            panels,
-            next_panel_id: DEFAULT_PANELS.len() + 1,
-            runtime,
+            state,
             chrome,
-            registry,
-            themes,
-            theme_idx: 0,
             theme,
             animation: None,
             last_frame: None,
             last_area: (0.0, 0.0),
             running: true,
+            cached_help_line,
+            cached_overlay_lines,
         })
     }
 
@@ -151,151 +100,36 @@ impl App {
         }
     }
 
-    fn current_preset(&self) -> &PresetInfo {
-        &self.presets[self.preset_idx]
-    }
-
-    // Catalog tells us whether the preset accepts dynamic panel lists
-    fn is_dynamic(&self) -> bool {
-        self.current_preset().input == PanelInputKind::DynamicList
-    }
-
-    fn current_theme_name(&self) -> &str {
-        &self.themes[self.theme_idx].name
-    }
-
-    fn current_theme_style(&self) -> &str {
-        &self.themes[self.theme_idx].style
-    }
-
-    fn focused_pid(&self) -> Option<PanelId> {
-        self.runtime.as_ref().and_then(|rt| rt.focused())
-    }
-
-    fn focused_kind(&self) -> Option<&str> {
-        self.runtime.as_ref()?.focused_kind()
-    }
-
-    fn rebuild_current(&mut self) {
-        self.runtime = build_preset(self.current_preset(), &self.panels);
-    }
-
-    fn switch_preset(&mut self, idx: usize) {
-        self.snapshot_for_animation();
-        self.preset_idx = idx;
-        self.rebuild_current();
-    }
-
-    fn next_preset(&mut self) {
-        self.switch_preset((self.preset_idx + 1) % self.presets.len());
-    }
-
-    fn prev_preset(&mut self) {
-        self.switch_preset((self.preset_idx + self.presets.len() - 1) % self.presets.len());
-    }
-
-    fn next_theme(&mut self) {
-        self.theme_idx = (self.theme_idx + 1) % self.themes.len();
-        if let Ok(t) = resolve_theme(&self.registry, &self.themes[self.theme_idx]) {
-            self.theme = t;
-        }
-    }
-
-    fn prev_theme(&mut self) {
-        self.theme_idx = (self.theme_idx + self.themes.len() - 1) % self.themes.len();
-        if let Ok(t) = resolve_theme(&self.registry, &self.themes[self.theme_idx]) {
-            self.theme = t;
-        }
-    }
-
-    fn next_focus(&mut self) {
-        if let Some(rt) = &mut self.runtime {
-            rt.focus_next();
-        }
-    }
-
-    fn prev_focus(&mut self) {
-        if let Some(rt) = &mut self.runtime {
-            rt.focus_prev();
-        }
-    }
-
-    // Spatial focus: move to nearest panel in a direction.
-    // Falls back to sequential focus for presets that hide panels (monocle, deck).
-    fn focus_direction(&mut self, dir: FocusDirection) {
-        let Some(rt) = &mut self.runtime else { return };
-        let spatial_ok = rt.focus_direction_current(dir).is_ok();
-        if spatial_ok {
-            return;
-        }
-        match dir {
-            FocusDirection::Right | FocusDirection::Down => rt.focus_next(),
-            FocusDirection::Left | FocusDirection::Up => rt.focus_prev(),
-        }
-    }
-
-    // Runtime handles live add/remove — no rebuild needed
-    fn add_panel(&mut self) {
-        if !self.is_dynamic() {
-            return;
-        }
-        let name: Arc<str> = format!("panel-{}", self.next_panel_id).into();
-        self.next_panel_id += 1;
-        self.panels.push(Arc::clone(&name));
-        self.snapshot_for_animation();
-        match self.runtime.as_mut() {
-            Some(rt) => {
-                let _ = rt.add_panel(name);
-            }
-            None => self.rebuild_current(),
-        }
-    }
-
-    fn remove_panel(&mut self) {
-        if !self.is_dynamic() {
-            return;
-        }
-        let Some((pid, kind)) = self.runtime.as_ref().and_then(|rt| {
-            let pid = rt.focused()?;
-            let kind = rt.focused_kind()?;
-            Some((pid, kind.to_owned()))
-        }) else {
-            return;
+    fn reload_theme(&mut self) -> bool {
+        let Ok(palette) = self.state.load_current_palette() else {
+            return false;
         };
-        self.snapshot_for_animation();
-        let Some(rt) = self.runtime.as_mut() else {
-            return;
-        };
-        let _ = rt.remove_panel(pid);
-        self.panels.retain(|p| p.as_ref() != kind.as_str());
+        self.theme = to_resolved_terminal_theme(&palette.resolve());
+        true
     }
+}
 
-    // Swap focused panel with its neighbor in the sequence
-    fn swap_forward(&mut self) {
-        self.snapshot_for_animation();
-        if let Some(rt) = &mut self.runtime {
-            rt.swap_next();
-        }
-    }
+/// Pre-format help overlay binding strings (called once; styled per-frame with theme colors).
+fn build_overlay_lines() -> Box<[Box<str>]> {
+    HELP_BINDINGS_TUI
+        .iter()
+        .map(|b| format!("  {:14}{}", b.key, b.action).into_boxed_str())
+        .collect()
+}
 
-    fn swap_backward(&mut self) {
-        self.snapshot_for_animation();
-        if let Some(rt) = &mut self.runtime {
-            rt.swap_prev();
+/// Build the static help-binding summary for the status bar (called once).
+fn build_help_line() -> Box<str> {
+    let mut buf = String::with_capacity(256);
+    buf.push(' ');
+    for (i, b) in HELP_BINDINGS_TUI.iter().enumerate() {
+        if i > 0 {
+            buf.push_str("  ");
         }
+        buf.push_str(b.key);
+        buf.push(' ');
+        buf.push_str(b.action);
     }
-
-    // Resize focused panel boundary
-    fn resize_focused(&mut self, delta: f32) {
-        let pid = match self.runtime.as_ref().and_then(|rt| rt.focused()) {
-            Some(pid) => pid,
-            None => return,
-        };
-        self.snapshot_for_animation();
-        if let Some(rt) = &mut self.runtime {
-            let _ = rt.resize_boundary(pid, delta);
-        }
-    }
+    buf.into_boxed_str()
 }
 
 // -- Rendering --
@@ -305,7 +139,7 @@ fn render_panels(
     resolved: &ResolvedLayout,
     origin: Rect,
     theme: &ResolvedTerminalTheme,
-    focused_pid: Option<PanelId>,
+    focused_pid: Option<panes::PanelId>,
 ) {
     let bg = theme.base.background;
     let fg = theme.base.foreground;
@@ -313,7 +147,7 @@ fn render_panels(
     let dim_border = theme.base.border;
     let bright_border = theme.surface.focus;
     // 12 chromatic ANSI colors for per-kind accent cycling
-    let accent_colors = theme.terminal_ansi.chromatic();
+    let accent_colors = theme.terminal.chromatic();
 
     // Focus state comes from the iterator — no manual decoration matching
     for (entry, focused) in panes_ratatui::focused_panels_at(resolved, focused_pid, origin) {
@@ -360,20 +194,51 @@ fn render_panels(
     }
 }
 
-fn render_layout(
+fn render_overlay(
     frame: &mut Frame,
-    runtime: &mut LayoutRuntime,
-    area: Rect,
+    overlay: OverlayEntry<'_, Rect>,
     theme: &ResolvedTerminalTheme,
-    animation: &mut Option<Animation>,
-    last_frame: &mut Option<PanesFrame>,
-    last_area: &mut (f32, f32),
+    cached_lines: &[Box<str>],
 ) {
-    let error_style = Style::default().fg(Color::Red).bg(theme.base.background);
+    let r = overlay.rect;
+    if r.width == 0 || r.height == 0 {
+        return;
+    }
+
+    let overlay_bg = theme.surface.float;
+    let fg = theme.base.foreground;
+    let border_fg = theme.surface.focus;
+    let muted = theme.typography.comment;
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(style(border_fg, overlay_bg))
+        .title(Span::styled(
+            format!(" {} ", overlay.kind),
+            style(border_fg, overlay_bg).add_modifier(Modifier::BOLD),
+        ))
+        .style(style(fg, overlay_bg));
+
+    let inner = block.inner(r);
+    frame.render_widget(block, r);
+
+    // Text is pre-formatted; only styling varies with theme
+    let lines: Vec<Line> = cached_lines
+        .iter()
+        .map(|text| Line::from(Span::styled(&**text, style(muted, overlay_bg))))
+        .collect();
+    frame.render_widget(Paragraph::new(lines).style(style(fg, overlay_bg)), inner);
+}
+
+fn render_layout(frame: &mut Frame, app: &mut App, area: Rect) {
+    let error_style = Style::default()
+        .fg(Color::Red)
+        .bg(app.theme.base.background);
     let w = f32::from(area.width);
     let h = f32::from(area.height);
 
-    let rt_frame = match runtime.resolve(w, h) {
+    let rt_frame = match app.state.resolve(w, h) {
         Ok(f) => f,
         Err(e) => {
             let msg = format!("resolve error: {e}");
@@ -385,7 +250,7 @@ fn render_layout(
     let target = rt_frame.layout();
 
     // Lerp between old and new layout during animation
-    let display = animation.as_mut().and_then(|anim| {
+    let display = app.animation.as_mut().and_then(|anim| {
         let t = (anim.start.elapsed().as_secs_f32() / ANIM_DURATION.as_secs_f32()).min(1.0);
         let lerped = anim
             .from
@@ -394,24 +259,24 @@ fn render_layout(
         (t < 1.0).then_some(lerped)
     });
     if display.is_none() {
-        *animation = None;
+        app.animation = None;
     }
 
     let resolved = display.as_ref().unwrap_or(target);
-    *last_area = (w, h);
+    app.last_area = (w, h);
 
-    render_panels(frame, resolved, area, theme, runtime.focused());
+    render_panels(frame, resolved, area, &app.theme, app.state.focused_pid());
+
+    // Overlays (e.g. help panel) rendered on top of panels — auto-clears underlying cells
+    let theme = &app.theme;
+    let cached_lines = &app.cached_overlay_lines;
+    panes_ratatui::render_overlays_at(frame, resolved, area, |f, entry| {
+        render_overlay(f, entry, theme, cached_lines);
+    });
 
     // Diff stats from runtime — computed automatically during resolve()
-    let diff = runtime.last_diff();
-    let diff_text = format!(
-        "+{} -{} ~{} ={} >{}",
-        diff.added.len(),
-        diff.removed.len(),
-        diff.resized.len(),
-        diff.unchanged.len(),
-        diff.moved.len(),
-    );
+    let diff = app.state.last_diff();
+    let diff_text = format_diff_counts(&diff);
     let text_width = (diff_text.len() as u16).min(area.width);
     let diff_area = Rect {
         x: area.x,
@@ -420,12 +285,15 @@ fn render_layout(
         height: 1.min(area.height),
     };
     frame.render_widget(
-        Paragraph::new(diff_text).style(style(theme.typography.comment, theme.base.background)),
+        Paragraph::new(diff_text).style(style(
+            app.theme.typography.comment,
+            app.theme.base.background,
+        )),
         diff_area,
     );
 
     // Store frame for next animation snapshot (moved after all borrows of target end)
-    *last_frame = Some(rt_frame);
+    app.last_frame = Some(rt_frame);
 }
 
 fn render(frame: &mut Frame, app: &mut App) {
@@ -460,26 +328,18 @@ fn render(frame: &mut Frame, app: &mut App) {
         return;
     };
 
-    let Some(ref mut rt) = app.runtime else {
-        let error_style = Style::default()
-            .fg(Color::Red)
-            .bg(app.theme.base.background);
-        frame.render_widget(
-            Paragraph::new("build error").style(error_style),
-            layout_area,
-        );
-        render_status(frame, app, status_area);
-        return;
-    };
-    render_layout(
-        frame,
-        rt,
-        layout_area,
-        &app.theme,
-        &mut app.animation,
-        &mut app.last_frame,
-        &mut app.last_area,
-    );
+    match app.state.runtime() {
+        Some(_) => render_layout(frame, app, layout_area),
+        None => {
+            let error_style = Style::default()
+                .fg(Color::Red)
+                .bg(app.theme.base.background);
+            frame.render_widget(
+                Paragraph::new("build error").style(error_style),
+                layout_area,
+            );
+        }
+    }
 
     render_status(frame, app, status_area);
 }
@@ -493,48 +353,27 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     let warn_fg = app.theme.semantic.warning;
     let muted = app.theme.typography.comment;
 
-    let panel_count = app.panels.len();
-    let dynamic_marker = match app.is_dynamic() {
-        true => format!(" panels: {panel_count}"),
-        false => " [fixed]".to_string(),
-    };
-
-    let preset = app.current_preset();
+    let sd = status_data(&app.state);
     let status_line = Line::from(vec![
         Span::styled(" preset: ", style(fg, sb_bg)),
-        Span::styled(preset.name, style(info_fg, sb_bg)),
-        Span::styled(
-            format!(" ({}/{})", app.preset_idx + 1, app.presets.len()),
-            style(muted, sb_bg),
-        ),
+        Span::styled(sd.preset_name, style(info_fg, sb_bg)),
+        Span::styled(&*sd.preset_position, style(muted, sb_bg)),
         Span::styled(" │ theme: ", style(fg, sb_bg)),
-        Span::styled(app.current_theme_name(), style(ok_fg, sb_bg)),
-        Span::styled(
-            format!(" [{}]", app.current_theme_style()),
-            style(muted, sb_bg),
-        ),
-        Span::styled(
-            format!(" ({}/{})", app.theme_idx + 1, app.themes.len()),
-            style(muted, sb_bg),
-        ),
-        Span::styled(format!(" │{dynamic_marker}"), style(warn_fg, sb_bg)),
+        Span::styled(sd.theme_name, style(ok_fg, sb_bg)),
+        Span::styled(&*sd.theme_style, style(muted, sb_bg)),
+        Span::styled(&*sd.theme_position, style(muted, sb_bg)),
+        Span::styled(&*sd.panel_marker, style(warn_fg, sb_bg)),
     ]);
 
-    let focused_pid = app.focused_pid();
-    let focused_kind = app.focused_kind();
-    let focus_text = match (focused_pid, focused_kind) {
-        (Some(_), Some(kind)) => kind.to_string(),
-        (Some(pid), None) => format!("{pid}"),
-        _ => "none".to_string(),
-    };
     let focus_line = Line::from(vec![
         Span::styled(" focus: ", style(fg, sb_bg)),
-        Span::styled(focus_text, style(warn_fg, sb_bg)),
+        Span::styled(&*sd.focus_text, style(warn_fg, sb_bg)),
     ]);
 
-    let help =
-        " ←/→ preset  ↑/↓ theme  Tab focus  HJKL spatial  a/d add/rm  [/] swap  +/- resize  q quit";
-    let help_line = Line::from(vec![Span::styled(help, style(muted, sb_bg))]);
+    let help_line = Line::from(vec![Span::styled(
+        &*app.cached_help_line,
+        style(muted, sb_bg),
+    )]);
 
     frame.render_widget(
         Paragraph::new(vec![status_line, focus_line, help_line]).style(Style::default().bg(sb_bg)),
@@ -542,40 +381,71 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Map a crossterm key code to a renderer-agnostic `Action`.
+fn key_to_action(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Right => Some(Action::NextPreset),
+        KeyCode::Left => Some(Action::PrevPreset),
+        KeyCode::Down => Some(Action::NextTheme),
+        KeyCode::Up => Some(Action::PrevTheme),
+        KeyCode::Tab => Some(Action::FocusNext),
+        KeyCode::BackTab => Some(Action::FocusPrev),
+        KeyCode::Char('H') => Some(Action::FocusDirection(FocusDirection::Left)),
+        KeyCode::Char('J') => Some(Action::FocusDirection(FocusDirection::Down)),
+        KeyCode::Char('K') => Some(Action::FocusDirection(FocusDirection::Up)),
+        KeyCode::Char('L') => Some(Action::FocusDirection(FocusDirection::Right)),
+        KeyCode::Char('a') => Some(Action::AddPanel),
+        KeyCode::Char('d') => Some(Action::RemovePanel),
+        KeyCode::Char('c') => Some(Action::ToggleCollapsed),
+        KeyCode::Char('[') => Some(Action::SwapPrev),
+        KeyCode::Char(']') => Some(Action::SwapNext),
+        KeyCode::Char('=') => Some(Action::ResizeHorizontal(0.05)),
+        KeyCode::Char('-') => Some(Action::ResizeHorizontal(-0.05)),
+        KeyCode::Char('+') => Some(Action::ResizeVertical(0.05)),
+        KeyCode::Char('_') => Some(Action::ResizeVertical(-0.05)),
+        KeyCode::Char('?') => Some(Action::ToggleHelp),
+        _ => None,
+    }
+}
+
 fn handle_key(app: &mut App, key: event::KeyEvent) {
-    match (key.kind, key.code) {
-        (KeyEventKind::Press, KeyCode::Char('q') | KeyCode::Esc) => app.running = false,
-        (KeyEventKind::Press, KeyCode::Right | KeyCode::Char('l')) => app.next_preset(),
-        (KeyEventKind::Press, KeyCode::Left | KeyCode::Char('h')) => app.prev_preset(),
-        (KeyEventKind::Press, KeyCode::Down | KeyCode::Char('j')) => app.next_theme(),
-        (KeyEventKind::Press, KeyCode::Up | KeyCode::Char('k')) => app.prev_theme(),
-        (KeyEventKind::Press, KeyCode::Tab) => app.next_focus(),
-        (KeyEventKind::Press, KeyCode::BackTab) => app.prev_focus(),
-        // Spatial focus via shift+hjkl
-        (KeyEventKind::Press, KeyCode::Char('H')) => {
-            app.focus_direction(FocusDirection::Left);
+    if !matches!(key.kind, KeyEventKind::Press) {
+        return;
+    }
+    match key.code {
+        KeyCode::Char('q') | KeyCode::Esc => {
+            app.running = false;
+            return;
         }
-        (KeyEventKind::Press, KeyCode::Char('J')) => {
-            app.focus_direction(FocusDirection::Down);
-        }
-        (KeyEventKind::Press, KeyCode::Char('K')) => {
-            app.focus_direction(FocusDirection::Up);
-        }
-        (KeyEventKind::Press, KeyCode::Char('L')) => {
-            app.focus_direction(FocusDirection::Right);
-        }
-        (KeyEventKind::Press, KeyCode::Char('a')) => app.add_panel(),
-        (KeyEventKind::Press, KeyCode::Char('d')) => app.remove_panel(),
-        // Swap focused panel with neighbor
-        (KeyEventKind::Press, KeyCode::Char('[')) => app.swap_backward(),
-        (KeyEventKind::Press, KeyCode::Char(']')) => app.swap_forward(),
-        // Resize focused panel boundary
-        (KeyEventKind::Press, KeyCode::Char('+') | KeyCode::Char('=')) => {
-            app.resize_focused(0.05);
-        }
-        (KeyEventKind::Press, KeyCode::Char('-')) => app.resize_focused(-0.05),
         _ => {}
     }
+    let Some(action) = key_to_action(key.code) else {
+        return;
+    };
+    // Snapshot before mutation so animation lerps from old to new layout
+    if action.changes_layout() {
+        app.snapshot_for_animation();
+    }
+    let layout_changed = app.state.apply(action);
+    // Theme cycling needs a palette reload
+    if !layout_changed {
+        app.reload_theme();
+    }
+}
+
+fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
+    let action = match mouse.kind {
+        MouseEventKind::ScrollDown => Action::ScrollBy(1.0),
+        MouseEventKind::ScrollUp => Action::ScrollBy(-1.0),
+        MouseEventKind::Down(event::MouseButton::Left) => {
+            Action::FocusAt(f32::from(mouse.column), f32::from(mouse.row))
+        }
+        _ => return,
+    };
+    if action.changes_layout() {
+        app.snapshot_for_animation();
+    }
+    app.state.apply(action);
 }
 
 // -- Main loop --
@@ -584,11 +454,12 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
 
 fn run() -> Result<(), Error> {
     enable_raw_mode()?;
-    crossterm::execute!(io::stdout(), EnterAlternateScreen)?;
+    crossterm::execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new()?;
+    load_snapshot(&mut app.state);
 
     while app.running {
         terminal.draw(|frame| render(frame, &mut app))?;
@@ -608,6 +479,7 @@ fn run() -> Result<(), Error> {
         loop {
             match ev {
                 Event::Key(key) => handle_key(&mut app, key),
+                Event::Mouse(mouse) => handle_mouse(&mut app, mouse),
                 Event::Resize(_, _) => resized = true,
                 _ => {}
             }
@@ -621,8 +493,10 @@ fn run() -> Result<(), Error> {
         }
     }
 
+    save_snapshot(&app.state);
+
     disable_raw_mode()?;
-    crossterm::execute!(io::stdout(), LeaveAlternateScreen)?;
+    crossterm::execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen)?;
     Ok(())
 }
 

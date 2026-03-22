@@ -1,9 +1,7 @@
 mod catalog;
 mod diff;
 mod engine;
-mod error;
-mod theme;
+mod overlay;
 mod types;
 
 pub use engine::*;
-pub use theme::*;

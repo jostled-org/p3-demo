@@ -1,0 +1,19 @@
+[package]
+name = "panes-egui-demo"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+demo-presets = { path = "../demo-presets" }
+panes = "0.15"
+panes-egui = "0.4.5"
+palette-core = { version = "0.11", features = ["egui"] }
+eframe = "0.33"
+rustc-hash = "2"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"

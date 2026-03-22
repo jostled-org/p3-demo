@@ -262,10 +262,10 @@ function handleKey(e) {
       break;
     case '+':
     case '=':
-      animatedAction(() => eng.resize_focused(0.05));
+      animatedAction(() => eng.resizeHorizontal(0.05));
       break;
     case '-':
-      animatedAction(() => eng.resize_focused(-0.05));
+      animatedAction(() => eng.resizeHorizontal(-0.05));
       break;
     default:
       handled = false;

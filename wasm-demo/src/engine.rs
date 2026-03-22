@@ -1,88 +1,64 @@
-use std::sync::Arc;
-
-use panes::runtime::LayoutRuntime;
-use panes::{FocusDirection, Layout, PanelInputKind, PresetInfo};
+use demo_presets::{DemoState, HELP_BINDINGS_GUI};
+use panes::{Layout, PanelInputKind};
+use panes_wasm::WasmRect;
+use serde_json::json;
 use wasm_bindgen::prelude::*;
 
 use crate::catalog::PresetDesc;
 use crate::diff::DiffCounts;
-use crate::error::EngineError;
-use crate::types::PanelRect;
-use demo_presets::build_preset;
+use crate::overlay::OverlayRect;
+use crate::types::{BaseRect, PanelRect};
 
-const DEFAULT_PANELS: &[&str] = &["editor", "terminal", "logs"];
+fn to_js_err(e: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&e.to_string())
+}
 
-fn parse_direction(dir: &str) -> Result<FocusDirection, EngineError> {
-    match dir {
-        "left" => Ok(FocusDirection::Left),
-        "right" => Ok(FocusDirection::Right),
-        "up" => Ok(FocusDirection::Up),
-        "down" => Ok(FocusDirection::Down),
-        other => Err(EngineError::UnknownDirection(other.to_string())),
+fn base_rect(id: u32, kind: &str, rect: WasmRect) -> BaseRect {
+    BaseRect {
+        id,
+        kind: kind.into(),
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
     }
 }
 
 #[wasm_bindgen]
 pub struct JsLayoutEngine {
-    runtime: LayoutRuntime,
-    panels: Vec<Arc<str>>,
-    next_panel_id: usize,
-    presets: &'static [PresetInfo],
-    preset_idx: usize,
+    state: DemoState,
 }
 
 #[wasm_bindgen]
 impl JsLayoutEngine {
     #[wasm_bindgen(constructor)]
-    pub fn new(preset_name: &str) -> Result<JsLayoutEngine, JsValue> {
-        let presets = Layout::presets();
-        let (idx, info) = presets
-            .iter()
-            .enumerate()
-            .find(|(_, p)| p.name == preset_name)
-            .ok_or_else(|| EngineError::UnknownPreset(preset_name.to_string()))?;
-
-        let panels: Vec<Arc<str>> = DEFAULT_PANELS.iter().map(|s| Arc::from(*s)).collect();
-        let runtime = build_preset(info, &panels)
-            .ok_or_else(|| EngineError::UnknownPreset(preset_name.to_string()))?;
-
-        Ok(Self {
-            runtime,
-            panels,
-            next_panel_id: DEFAULT_PANELS.len() + 1,
-            presets,
-            preset_idx: idx,
-        })
+    pub fn new(preset_name: &str, cell: f32) -> Result<JsLayoutEngine, JsValue> {
+        let mut state = DemoState::new(cell).map_err(to_js_err)?;
+        state.set_help_binding_count(HELP_BINDINGS_GUI.len());
+        state.switch_preset(preset_name).map_err(to_js_err)?;
+        Ok(Self { state })
     }
 
     /// Returns JSON: [{id, kind, x, y, w, h, focused, kind_index}]
     pub fn resolve(&mut self, width: f32, height: f32) -> Result<String, JsValue> {
-        let frame = self
-            .runtime
-            .resolve(width, height)
-            .map_err(EngineError::from)?;
+        let frame = self.state.resolve(width, height).map_err(to_js_err)?;
         let layout = frame.layout();
-        let focused = self.runtime.focused();
+        let focused = self.state.focused_pid();
 
         let rects: Vec<PanelRect> = panes_wasm::panels(layout)
             .map(|entry| PanelRect {
-                id: entry.id.raw(),
-                kind: entry.kind.to_string(),
-                x: entry.rect.x,
-                y: entry.rect.y,
-                w: entry.rect.w,
-                h: entry.rect.h,
+                base: base_rect(entry.id.raw(), entry.kind, entry.rect),
                 focused: focused == Some(entry.id),
                 kind_index: entry.kind_index,
             })
             .collect();
 
-        serde_json::to_string(&rects).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_json::to_string(&rects).map_err(to_js_err)
     }
 
     /// Returns JSON: {added, removed, resized, moved, unchanged}
     pub fn diff_counts(&self) -> String {
-        let diff = self.runtime.last_diff();
+        let diff = self.state.last_diff();
         let counts = DiffCounts {
             added: diff.added.len(),
             removed: diff.removed.len(),
@@ -90,110 +66,162 @@ impl JsLayoutEngine {
             moved: diff.moved.len(),
             unchanged: diff.unchanged.len(),
         };
-        serde_json::to_string(&counts).unwrap_or_default()
+        // Fallback: valid empty JSON object if serialization fails (no web_sys console access)
+        serde_json::to_string(&counts).unwrap_or_else(|_| "{}".to_string())
     }
 
     pub fn switch_preset(&mut self, name: &str) -> Result<(), JsValue> {
-        let (idx, info) = self
-            .presets
-            .iter()
-            .enumerate()
-            .find(|(_, p)| p.name == name)
-            .ok_or_else(|| EngineError::UnknownPreset(name.to_string()))?;
-
-        let rt = build_preset(info, &self.panels)
-            .ok_or_else(|| EngineError::UnknownPreset(name.to_string()))?;
-        self.runtime = rt;
-        self.preset_idx = idx;
-        Ok(())
+        self.state.switch_preset(name).map_err(to_js_err)
     }
 
     pub fn focus_next(&mut self) {
-        self.runtime.focus_next();
+        self.state.focus_next();
     }
 
     pub fn focus_prev(&mut self) {
-        self.runtime.focus_prev();
+        self.state.focus_prev();
+    }
+
+    #[wasm_bindgen(js_name = "focusAt")]
+    pub fn focus_at(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
+        self.state.focus_at(viewport_x, viewport_y)
     }
 
     pub fn focus_direction(&mut self, dir: &str) -> Result<(), JsValue> {
-        let direction = parse_direction(dir)?;
-        let spatial_result = self.runtime.focus_direction_current(direction);
-        match (spatial_result, direction) {
-            (Ok(_), _) => {}
-            (Err(_), FocusDirection::Right | FocusDirection::Down) => self.runtime.focus_next(),
-            (Err(_), FocusDirection::Left | FocusDirection::Up) => self.runtime.focus_prev(),
-        }
-        Ok(())
+        self.state.focus_direction_str(dir).map_err(to_js_err)
     }
 
     pub fn add_panel(&mut self) -> Result<(), JsValue> {
-        if !self.is_dynamic() {
-            return Err(EngineError::NotDynamic.into());
-        }
-        let name: Arc<str> = format!("panel-{}", self.next_panel_id).into();
-        self.next_panel_id += 1;
-        self.panels.push(Arc::clone(&name));
-        self.runtime.add_panel(name).map_err(EngineError::from)?;
-        Ok(())
+        self.state.add_panel().map_err(to_js_err)
     }
 
     pub fn remove_panel(&mut self) -> Result<(), JsValue> {
-        if !self.is_dynamic() {
-            return Err(EngineError::NotDynamic.into());
-        }
-        let (pid, kind) = match self.runtime.focused().and_then(|pid| {
-            let kind = self.runtime.focused_kind()?.to_owned();
-            Some((pid, kind))
-        }) {
-            Some(pair) => pair,
-            None => return Ok(()),
-        };
-        let _ = self.runtime.remove_panel(pid).map_err(EngineError::from)?;
-        self.panels.retain(|p| p.as_ref() != kind.as_str());
-        Ok(())
+        self.state.remove_panel().map_err(to_js_err)
+    }
+
+    #[wasm_bindgen(js_name = "scrollBy")]
+    pub fn scroll_by(&mut self, delta: f32) {
+        self.state.scroll_by(delta);
     }
 
     pub fn swap_next(&mut self) {
-        self.runtime.swap_next();
+        self.state.swap_next();
     }
 
     pub fn swap_prev(&mut self) {
-        self.runtime.swap_prev();
+        self.state.swap_prev();
     }
 
-    pub fn resize_focused(&mut self, delta: f32) {
-        let Some(pid) = self.runtime.focused() else {
-            return;
-        };
-        let _ = self.runtime.resize_boundary(pid, delta);
+    #[wasm_bindgen(js_name = "resizeHorizontal")]
+    pub fn resize_horizontal(&mut self, delta: f32) {
+        self.state.resize_horizontal(delta);
+    }
+
+    #[wasm_bindgen(js_name = "resizeVertical")]
+    pub fn resize_vertical(&mut self, delta: f32) {
+        self.state.resize_vertical(delta);
     }
 
     pub fn toggle_collapsed(&mut self) -> Result<(), JsValue> {
-        let Some(pid) = self.runtime.focused() else {
-            return Ok(());
-        };
-        self.runtime
-            .toggle_collapsed(pid)
-            .map_err(EngineError::from)?;
-        Ok(())
+        self.state.toggle_collapsed().map_err(to_js_err)
+    }
+
+    /// Returns JSON: [{id, kind, x, y, w, h}]
+    ///
+    /// Uses the layout from the last `resolve()` call. Call `resolve()` first.
+    #[wasm_bindgen(js_name = "resolveOverlays")]
+    pub fn resolve_overlays(&self) -> Result<String, JsValue> {
+        let frame = self.state.last_frame().ok_or_else(|| {
+            JsValue::from_str("resolve() must be called before resolveOverlays()")
+        })?;
+        let layout = frame.layout();
+
+        let rects: Vec<OverlayRect> = panes_wasm::overlays(layout)
+            .map(|entry| OverlayRect {
+                base: base_rect(entry.id.raw(), entry.kind, entry.rect),
+            })
+            .collect();
+
+        serde_json::to_string(&rects).map_err(to_js_err)
+    }
+
+    /// Returns a JSON snapshot of the current layout state for localStorage.
+    pub fn snapshot(&self) -> Result<String, JsValue> {
+        let snap = self
+            .state
+            .snapshot()
+            .ok_or_else(|| JsValue::from_str("no runtime available for snapshot"))?;
+        serde_json::to_string(&snap).map_err(to_js_err)
+    }
+
+    /// Restores layout state from a JSON snapshot string.
+    pub fn restore(&mut self, json: &str) -> Result<(), JsValue> {
+        let snap = serde_json::from_str(json).map_err(to_js_err)?;
+        self.state.restore(snap).map_err(to_js_err)
+    }
+
+    #[wasm_bindgen(js_name = "toggleHelp")]
+    pub fn toggle_help(&mut self) {
+        self.state.toggle_help();
+    }
+
+    #[wasm_bindgen(js_name = "helpVisible")]
+    pub fn help_visible(&self) -> bool {
+        self.state.help_visible()
     }
 
     pub fn is_dynamic(&self) -> bool {
-        self.presets[self.preset_idx].input == PanelInputKind::DynamicList
+        self.state.is_dynamic()
     }
 
     pub fn preset_name(&self) -> String {
-        self.presets[self.preset_idx].name.to_string()
+        self.state.preset_name().to_string()
     }
 
     pub fn focused_kind(&self) -> Option<String> {
-        self.runtime.focused_kind().map(str::to_string)
+        self.state.focused_kind().map(str::to_string)
     }
 
     pub fn panel_count(&self) -> usize {
-        self.panels.len()
+        self.state.panel_count()
     }
+
+    /// Returns JSON: [{id, name, style}]
+    #[wasm_bindgen(js_name = "themeList")]
+    pub fn theme_list(&self) -> String {
+        let themes: Vec<serde_json::Value> = self
+            .state
+            .themes()
+            .iter()
+            .map(|t| {
+                json!({
+                    "id": t.id.as_ref(),
+                    "name": t.name.as_ref(),
+                    "style": t.style.as_ref(),
+                })
+            })
+            .collect();
+        // Fallback: valid empty JSON array if serialization fails (no web_sys console access)
+        serde_json::to_string(&themes).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Returns a CSS block (`:root { --bg: ...; ... }`) for the given theme ID.
+    #[wasm_bindgen(js_name = "themeCss")]
+    pub fn theme_css(&self, id: &str) -> Result<String, JsValue> {
+        let palette = self.state.load_palette(id).map_err(to_js_err)?;
+        Ok(palette.to_css())
+    }
+}
+
+/// Returns JSON: [{key, action}]
+#[wasm_bindgen(js_name = "helpBindings")]
+pub fn help_bindings() -> String {
+    let bindings: Vec<serde_json::Value> = HELP_BINDINGS_GUI
+        .iter()
+        .map(|b| json!({ "key": b.key, "action": b.action }))
+        .collect();
+    // Fallback: valid empty JSON array if serialization fails (no web_sys console access)
+    serde_json::to_string(&bindings).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Returns JSON: [{name, input, description}]
@@ -210,5 +238,6 @@ pub fn layout_presets() -> String {
             description: p.description,
         })
         .collect();
-    serde_json::to_string(&presets).unwrap_or_default()
+    // Fallback: valid empty JSON array if serialization fails (no web_sys console access)
+    serde_json::to_string(&presets).unwrap_or_else(|_| "[]".to_string())
 }
