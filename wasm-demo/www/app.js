@@ -1,4 +1,4 @@
-import init, { JsLayoutEngine, layoutPresets, themeList, themeCss } from './pkg/panes_wasm_demo.js';
+import init, { JsLayoutEngine, layoutPresets } from './pkg/panes_wasm_demo.js';
 
 const ANIM_MS = 250;
 
@@ -55,7 +55,7 @@ function lerp(a, b, t) {
 
 function applyTheme() {
   const info = state.themes[state.themeIdx];
-  themeCssEl.textContent = themeCss(info.id);
+  themeCssEl.textContent = state.engine.themeCss(info.id);
 }
 
 // -- Rendering --
@@ -319,7 +319,7 @@ async function main() {
   state.presets = JSON.parse(layoutPresets());
   state.engine = new JsLayoutEngine(state.presets[0].name, 1.0);
 
-  state.themes = JSON.parse(themeList());
+  state.themes = JSON.parse(state.engine.themeList());
   applyTheme();
 
   setupSelects();
