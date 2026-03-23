@@ -139,3 +139,61 @@ footer {
   font-size: 0.65rem;
   margin-top: 0.15rem;
 }
+
+/* -- Help overlay -- */
+
+#overlay-container {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  pointer-events: none;
+}
+
+.overlay {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+}
+
+.overlay-card {
+  background: var(--bg, #1e1e2e);
+  border: 1px solid var(--border, #313244);
+  border-radius: 8px;
+  padding: 1.5rem 2rem;
+  max-height: 90%;
+  overflow-y: auto;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.overlay-card h2 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--info, #89b4fa);
+  margin-bottom: 0.75rem;
+  text-align: center;
+}
+
+.overlay-card table {
+  border-collapse: collapse;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.75rem;
+}
+
+.overlay-card tr + tr td {
+  padding-top: 0.25rem;
+}
+
+.overlay-card td {
+  padding: 0.1rem 0.5rem;
+}
+
+.overlay-key {
+  color: var(--warning, #f9e2af);
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}

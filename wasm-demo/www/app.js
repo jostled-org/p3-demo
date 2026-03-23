@@ -1,4 +1,4 @@
-import init, { JsLayoutEngine, layoutPresets } from './pkg/panes_wasm_demo.js';
+import init, { JsLayoutEngine, layoutPresets, helpBindings } from './pkg/panes_wasm_demo.js';
 
 const ANIM_MS = 250;
 
@@ -25,6 +25,7 @@ const state = {
   targetRects: null,
   animStart: null,
   animFrame: null,
+  dragging: false,
 };
 
 // -- DOM refs --
@@ -39,6 +40,7 @@ const stPanels = document.getElementById('st-panels');
 const stFocus = document.getElementById('st-focus');
 const stDiff = document.getElementById('st-diff');
 const themeCssEl = document.getElementById('theme-css');
+const overlayContainer = document.getElementById('overlay-container');
 
 // -- Easing --
 
@@ -70,8 +72,9 @@ function resolveLayout() {
 function syncPanels(panels, progress) {
   const activeIds = new Set(panels.map(p => String(p.id)));
 
-  // Remove stale panels
+  // Remove stale panels (skip overlay container)
   for (const el of [...viewport.children]) {
+    if (el.id === 'overlay-container') continue;
     if (!activeIds.has(el.dataset.panelId)) {
       el.remove();
     }
@@ -138,6 +141,47 @@ function updateStatus() {
   stDiff.textContent = `+${diff.added} -${diff.removed} ~${diff.resized} =${diff.unchanged} >${diff.moved}`;
 }
 
+function renderOverlays() {
+  const eng = state.engine;
+  if (!eng.helpVisible()) {
+    overlayContainer.style.display = 'none';
+    return;
+  }
+
+  overlayContainer.style.display = '';
+  const overlays = JSON.parse(eng.resolveOverlays());
+
+  // Position overlay divs from engine rects
+  const activeIds = new Set(overlays.map(o => String(o.id)));
+  for (const el of [...overlayContainer.querySelectorAll('.overlay')]) {
+    if (!activeIds.has(el.dataset.overlayId)) el.remove();
+  }
+
+  // Build help content once (static data)
+  const bindings = JSON.parse(helpBindings());
+  let cardHtml = '<div class="overlay-card"><h2>Keybindings</h2><table>';
+  for (const b of bindings) {
+    cardHtml += `<tr><td class="overlay-key">${b.key}</td><td>${b.action}</td></tr>`;
+  }
+  cardHtml += '</table></div>';
+
+  for (const o of overlays) {
+    const key = String(o.id);
+    let el = overlayContainer.querySelector(`[data-overlay-id="${key}"]`);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'overlay';
+      el.dataset.overlayId = key;
+      el.innerHTML = cardHtml;
+      overlayContainer.appendChild(el);
+    }
+    el.style.left = `${o.x}px`;
+    el.style.top = `${o.y}px`;
+    el.style.width = `${o.w}px`;
+    el.style.height = `${o.h}px`;
+  }
+}
+
 function renderFrame(timestamp) {
   let progress = null;
   if (state.animStart !== null) {
@@ -156,6 +200,7 @@ function renderFrame(timestamp) {
   if (!panels) return;
 
   syncPanels(panels, progress);
+  renderOverlays();
   updateStatus();
 
   if (state.animStart !== null) {
@@ -261,17 +306,78 @@ function handleKey(e) {
       animatedAction(() => eng.swap_next());
       break;
     case '+':
+      animatedAction(() => eng.resizeVertical(0.05));
+      break;
+    case '_':
+      animatedAction(() => eng.resizeVertical(-0.05));
+      break;
     case '=':
       animatedAction(() => eng.resizeHorizontal(0.05));
       break;
     case '-':
       animatedAction(() => eng.resizeHorizontal(-0.05));
       break;
+    case '?':
+      eng.toggleHelp();
+      render();
+      break;
     default:
       handled = false;
   }
 
   if (handled) e.preventDefault();
+}
+
+function viewportCoords(e) {
+  const rect = viewport.getBoundingClientRect();
+  return [e.clientX - rect.left, e.clientY - rect.top];
+}
+
+function cursorForBoundary(axis) {
+  switch (axis) {
+    case 'vertical': return 'col-resize';
+    case 'horizontal': return 'row-resize';
+    default: return '';
+  }
+}
+
+function handleMouseDown(e) {
+  const [x, y] = viewportCoords(e);
+  const eng = state.engine;
+  const boundary = eng.boundaryHover(x, y);
+  if (boundary) {
+    if (eng.dragStart(x, y)) {
+      state.dragging = true;
+      viewport.style.cursor = cursorForBoundary(boundary);
+    }
+  } else {
+    eng.focusAt(x, y);
+    render();
+  }
+}
+
+function handleMouseMove(e) {
+  const [x, y] = viewportCoords(e);
+  const eng = state.engine;
+  if (state.dragging) {
+    eng.dragMove(x, y);
+    render();
+  } else {
+    viewport.style.cursor = cursorForBoundary(eng.boundaryHover(x, y));
+  }
+}
+
+function handleMouseUp() {
+  if (!state.dragging) return;
+  state.dragging = false;
+  state.engine.dragEnd();
+  viewport.style.cursor = '';
+  render();
+}
+
+function handleWheel(e) {
+  e.preventDefault();
+  animatedAction(() => state.engine.scrollBy(e.deltaY > 0 ? 1.0 : -1.0));
 }
 
 function setupSelects() {
@@ -311,6 +417,49 @@ function setupSelects() {
   });
 }
 
+// -- Persistence --
+
+const STORAGE_SNAPSHOT = 'p3-demo:snapshot';
+const STORAGE_THEME = 'p3-demo:themeIdx';
+
+function saveState() {
+  try {
+    const json = state.engine.snapshot();
+    localStorage.setItem(STORAGE_SNAPSHOT, json);
+    localStorage.setItem(STORAGE_THEME, String(state.themeIdx));
+  } catch (_) {
+    // Best-effort: localStorage may be unavailable or quota exceeded.
+  }
+}
+
+function restoreState() {
+  try {
+    const json = localStorage.getItem(STORAGE_SNAPSHOT);
+    if (!json) return;
+    // Extract preset name to sync JS-side index before restoring.
+    const parsed = JSON.parse(json);
+    const presetName = parsed.preset;
+    const presetIdx = state.presets.findIndex(p => p.name === presetName);
+    if (presetIdx < 0) return;
+
+    state.engine.restore(json);
+    state.presetIdx = presetIdx;
+    presetSelect.value = state.presets[presetIdx].name;
+
+    const savedTheme = localStorage.getItem(STORAGE_THEME);
+    if (savedTheme !== null) {
+      const idx = Number(savedTheme);
+      if (idx >= 0 && idx < state.themes.length) {
+        state.themeIdx = idx;
+        themeSelect.value = state.themes[idx].id;
+      }
+    }
+    applyTheme();
+  } catch (_) {
+    // Snapshot invalid or engine rejected it — continue with defaults.
+  }
+}
+
 // -- Init --
 
 async function main() {
@@ -324,7 +473,14 @@ async function main() {
 
   setupSelects();
 
+  restoreState();
+
   document.addEventListener('keydown', handleKey);
+  viewport.addEventListener('mousedown', handleMouseDown);
+  viewport.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mouseup', handleMouseUp);
+  viewport.addEventListener('wheel', handleWheel, { passive: false });
+  window.addEventListener('beforeunload', saveState);
 
   new ResizeObserver(() => {
     state.targetRects = null;

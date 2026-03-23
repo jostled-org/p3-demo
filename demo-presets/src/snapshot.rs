@@ -1,9 +1,6 @@
 use panes::LayoutSnapshot;
 
-/// Serializable snapshot of the full demo state.
-///
-/// Wraps a panes `LayoutSnapshot` with the preset name so that
-/// `DemoState::restore` can set the correct preset index.
+/// Serializable snapshot pairing a preset name with a `LayoutSnapshot`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DemoSnapshot {
     preset: Box<str>,

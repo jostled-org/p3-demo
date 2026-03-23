@@ -339,15 +339,24 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     let muted = app.theme.typography.comment;
 
     let sd = status_data(&app.state);
+
+    let preset_pos = format!(" ({}/{})", sd.preset_idx + 1, sd.preset_count);
+    let theme_style_tag = format!(" [{}]", sd.theme_style);
+    let theme_pos = format!(" ({}/{})", sd.theme_idx + 1, sd.theme_count);
+    let panel_marker = match sd.is_dynamic {
+        true => format!(" │ panels: {}", sd.panel_count),
+        false => String::from(" │ [fixed]"),
+    };
+
     let status_line = Line::from(vec![
         Span::styled(" preset: ", style(fg, sb_bg)),
         Span::styled(sd.preset_name, style(info_fg, sb_bg)),
-        Span::styled(&*sd.preset_position, style(muted, sb_bg)),
+        Span::styled(preset_pos, style(muted, sb_bg)),
         Span::styled(" │ theme: ", style(fg, sb_bg)),
         Span::styled(sd.theme_name, style(ok_fg, sb_bg)),
-        Span::styled(&*sd.theme_style, style(muted, sb_bg)),
-        Span::styled(&*sd.theme_position, style(muted, sb_bg)),
-        Span::styled(&*sd.panel_marker, style(warn_fg, sb_bg)),
+        Span::styled(theme_style_tag, style(muted, sb_bg)),
+        Span::styled(theme_pos, style(muted, sb_bg)),
+        Span::styled(panel_marker, style(warn_fg, sb_bg)),
     ]);
 
     let focus_line = Line::from(vec![

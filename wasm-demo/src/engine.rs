@@ -6,7 +6,6 @@ use wasm_bindgen::prelude::*;
 
 use crate::catalog::PresetDesc;
 use crate::diff::DiffCounts;
-use crate::overlay::OverlayRect;
 use crate::types::{BaseRect, PanelRect};
 
 fn to_js_err(e: impl std::fmt::Display) -> JsValue {
@@ -28,7 +27,7 @@ fn base_rect(id: u32, kind: &str, rect: WasmRect) -> BaseRect {
 pub struct JsLayoutEngine {
     state: DemoState,
     panel_buf: Vec<PanelRect>,
-    overlay_buf: Vec<OverlayRect>,
+    overlay_buf: Vec<BaseRect>,
 }
 
 #[wasm_bindgen]
@@ -45,7 +44,6 @@ impl JsLayoutEngine {
         })
     }
 
-    /// Returns JSON: [{id, kind, x, y, w, h, focused, kind_index}]
     pub fn resolve(&mut self, width: f32, height: f32) -> Result<String, JsValue> {
         let frame = self.state.resolve(width, height).map_err(to_js_err)?;
         let layout = frame.layout();
@@ -62,8 +60,7 @@ impl JsLayoutEngine {
         serde_json::to_string(&self.panel_buf).map_err(to_js_err)
     }
 
-    /// Returns JSON: {added, removed, resized, moved, unchanged}
-    pub fn diff_counts(&self) -> String {
+    pub fn diff_counts(&self) -> Result<String, JsValue> {
         let diff = self.state.last_diff();
         let counts = DiffCounts {
             added: diff.added.len(),
@@ -72,8 +69,7 @@ impl JsLayoutEngine {
             moved: diff.moved.len(),
             unchanged: diff.unchanged.len(),
         };
-        // Fallback: valid empty JSON object if serialization fails (no web_sys console access)
-        serde_json::to_string(&counts).unwrap_or_else(|_| "{}".to_string())
+        serde_json::to_string(&counts).map_err(to_js_err)
     }
 
     pub fn switch_preset(&mut self, name: &str) -> Result<(), JsValue> {
@@ -132,9 +128,7 @@ impl JsLayoutEngine {
         self.state.toggle_collapsed().map_err(to_js_err)
     }
 
-    /// Returns JSON: [{id, kind, x, y, w, h}]
-    ///
-    /// Uses the layout from the last `resolve()` call. Call `resolve()` first.
+    /// Call `resolve()` before this.
     #[wasm_bindgen(js_name = "resolveOverlays")]
     pub fn resolve_overlays(&mut self) -> Result<String, JsValue> {
         let frame = self.state.last_frame().ok_or_else(|| {
@@ -143,15 +137,14 @@ impl JsLayoutEngine {
         let layout = frame.layout();
 
         self.overlay_buf.clear();
-        self.overlay_buf
-            .extend(panes_wasm::overlays(layout).map(|entry| OverlayRect {
-                base: base_rect(entry.id.raw(), entry.kind, entry.rect),
-            }));
+        self.overlay_buf.extend(
+            panes_wasm::overlays(layout)
+                .map(|entry| base_rect(entry.id.raw(), entry.kind, entry.rect)),
+        );
 
         serde_json::to_string(&self.overlay_buf).map_err(to_js_err)
     }
 
-    /// Returns a JSON snapshot of the current layout state for localStorage.
     pub fn snapshot(&self) -> Result<String, JsValue> {
         let snap = self
             .state
@@ -160,7 +153,6 @@ impl JsLayoutEngine {
         serde_json::to_string(&snap).map_err(to_js_err)
     }
 
-    /// Restores layout state from a JSON snapshot string.
     pub fn restore(&mut self, json: &str) -> Result<(), JsValue> {
         let snap = serde_json::from_str(json).map_err(to_js_err)?;
         self.state.restore(snap).map_err(to_js_err)
@@ -176,7 +168,7 @@ impl JsLayoutEngine {
         self.state.help_visible()
     }
 
-    /// Returns the boundary axis as a string ("vertical" or "horizontal"), or null.
+    /// Returns `"vertical"`, `"horizontal"`, or null.
     #[wasm_bindgen(js_name = "boundaryHover")]
     pub fn boundary_hover(&self, viewport_x: f32, viewport_y: f32) -> JsValue {
         match self.state.boundary_hover(viewport_x, viewport_y) {
@@ -186,19 +178,16 @@ impl JsLayoutEngine {
         }
     }
 
-    /// Begin a drag at pointer position. Returns true if a boundary was hit.
     #[wasm_bindgen(js_name = "dragStart")]
     pub fn drag_start(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
         self.state.drag_start(viewport_x, viewport_y)
     }
 
-    /// Continue a drag to the new pointer position. Returns true if resize occurred.
     #[wasm_bindgen(js_name = "dragMove")]
     pub fn drag_move(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
         self.state.drag_move(viewport_x, viewport_y)
     }
 
-    /// End the current drag.
     #[wasm_bindgen(js_name = "dragEnd")]
     pub fn drag_end(&mut self) {
         self.state.drag_end();
@@ -220,9 +209,8 @@ impl JsLayoutEngine {
         self.state.panel_count()
     }
 
-    /// Returns JSON: [{id, name, style}]
     #[wasm_bindgen(js_name = "themeList")]
-    pub fn theme_list(&self) -> String {
+    pub fn theme_list(&self) -> Result<String, JsValue> {
         let themes: Vec<serde_json::Value> = self
             .state
             .themes()
@@ -235,11 +223,9 @@ impl JsLayoutEngine {
                 })
             })
             .collect();
-        // Fallback: valid empty JSON array if serialization fails (no web_sys console access)
-        serde_json::to_string(&themes).unwrap_or_else(|_| "[]".to_string())
+        serde_json::to_string(&themes).map_err(to_js_err)
     }
 
-    /// Returns a CSS block (`:root { --bg: ...; ... }`) for the given theme ID.
     #[wasm_bindgen(js_name = "themeCss")]
     pub fn theme_css(&self, id: &str) -> Result<String, JsValue> {
         let palette = self.state.load_palette(id).map_err(to_js_err)?;
@@ -247,20 +233,17 @@ impl JsLayoutEngine {
     }
 }
 
-/// Returns JSON: [{key, action}]
 #[wasm_bindgen(js_name = "helpBindings")]
-pub fn help_bindings() -> String {
+pub fn help_bindings() -> Result<String, JsValue> {
     let bindings: Vec<serde_json::Value> = HELP_BINDINGS_GUI
         .iter()
         .map(|b| json!({ "key": b.key, "action": b.action }))
         .collect();
-    // Fallback: valid empty JSON array if serialization fails (no web_sys console access)
-    serde_json::to_string(&bindings).unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string(&bindings).map_err(to_js_err)
 }
 
-/// Returns JSON: [{name, input, description}]
 #[wasm_bindgen(js_name = "layoutPresets")]
-pub fn layout_presets() -> String {
+pub fn layout_presets() -> Result<String, JsValue> {
     let presets: Vec<PresetDesc> = Layout::presets()
         .iter()
         .map(|p| PresetDesc {
@@ -272,6 +255,5 @@ pub fn layout_presets() -> String {
             description: p.description,
         })
         .collect();
-    // Fallback: valid empty JSON array if serialization fails (no web_sys console access)
-    serde_json::to_string(&presets).unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string(&presets).map_err(to_js_err)
 }

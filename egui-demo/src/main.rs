@@ -294,14 +294,22 @@ fn render_status(app: &DemoApp, ctx: &egui::Context) {
 
 fn render_status_lines(app: &DemoApp, ui: &mut egui::Ui) {
     let sd = demo_presets::status_data(&app.state);
+
+    let panel_info = match sd.is_dynamic {
+        true => format!(" │ panels: {}", sd.panel_count),
+        false => String::from(" │ [fixed]"),
+    };
+
     ui.label(format!(
-        "preset: {}{} │ theme: {}{}{}{}",
+        "preset: {} ({}/{}) │ theme: {} [{}] ({}/{}){}",
         sd.preset_name,
-        sd.preset_position,
+        sd.preset_idx + 1,
+        sd.preset_count,
         sd.theme_name,
         sd.theme_style,
-        sd.theme_position,
-        sd.panel_marker,
+        sd.theme_idx + 1,
+        sd.theme_count,
+        panel_info,
     ));
 
     ui.horizontal(|ui| {

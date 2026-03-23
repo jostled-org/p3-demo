@@ -40,13 +40,7 @@ pub enum DemoError {
     Panes(#[from] PaneError),
 }
 
-/// Build a `LayoutRuntime` for a named preset with demo-specific defaults.
-///
-/// Ratios, gaps, and column counts are tuned for the p3-demo showcase.
-/// `cell` scales absolute values (gaps, widths, heights) to the renderer's
-/// coordinate system. Ratatui passes `1.0` (terminal cells), egui passes
-/// a cell-to-pixel ratio (e.g. `8.0`).
-/// Returns `None` for unrecognized preset names.
+/// Build a `LayoutRuntime` for a named preset. `cell` scales absolute values to renderer units.
 pub fn build_preset(info: &PresetInfo, panels: &[Arc<str>], cell: f32) -> Option<LayoutRuntime> {
     let iter = || panels.iter().map(Arc::clone);
     let cards = || -> Vec<(Arc<str>, usize)> { iter().map(|p| (p, 1)).collect() };
@@ -115,20 +109,12 @@ fn attach_help_overlay(
     let _ = rt.set_overlay_height(presets::HELP_OVERLAY_KIND, height);
 }
 
-/// Compute help overlay height from binding count and cell size.
-///
-/// Each binding occupies one line (`cell` height). Two additional lines
-/// account for the top/bottom border.
+/// One line per binding plus two for top/bottom border.
 fn help_overlay_height(binding_count: usize, cell: f32) -> f32 {
     (binding_count as f32 + 2.0) * cell
 }
 
-/// Pick a `PanelId` from a `BoundaryHit` for resize.
-///
-/// Returns the panel id and a sign multiplier (+1 or -1) so that a positive
-/// pixel delta in the boundary's axis maps to a positive resize delta.
-/// `sides.0` is the before-sibling (left/top); if it is a panel, sign is +1.
-/// Otherwise falls back to `sides.1` (right/bottom) with sign -1.
+/// Pick a panel from a boundary hit, returning sign (+1/-1) for delta direction.
 fn boundary_panel_id(rt: &LayoutRuntime, hit: BoundaryHit) -> Option<(PanelId, f32)> {
     let tree = rt.tree();
     if let Some(Node::Panel { id, .. }) = tree.node(hit.sides.0) {
@@ -147,9 +133,6 @@ struct DragState {
 }
 
 /// Shared state machine for all p3-demo renderers.
-///
-/// Manages presets, themes, panels, focus, and layout resolution.
-/// Animation and rendering are left to each renderer.
 pub struct DemoState {
     runtime: Option<LayoutRuntime>,
     last_frame: Option<PanesFrame>,
@@ -169,11 +152,7 @@ pub struct DemoState {
 }
 
 impl DemoState {
-    /// Create a new demo state.
-    ///
-    /// `cell` scales absolute layout values to the renderer's coordinate system.
-    /// Pass `1.0` for terminal cells (ratatui), or a cell-to-pixel ratio for
-    /// pixel-based renderers (egui, wasm).
+    /// Create a new demo state. `cell` scales layout values to renderer units.
     pub fn new(cell: f32) -> Result<Self, DemoError> {
         let registry = Registry::new();
         let themes: Box<[ThemeInfo]> = registry.list().cloned().collect();
@@ -385,14 +364,7 @@ impl DemoState {
         self.runtime.as_ref().and_then(|rt| rt.focused())
     }
 
-    /// Focus the panel at viewport coordinates, if any.
-    ///
-    /// Uses `panel_at_point` from the last resolved layout for hit-testing.
-    /// Returns `true` if a panel was focused.
-    ///
-    /// Unlike `focus_next`/`focus_prev`/`focus_direction`, which delegate to
-    /// `LayoutRuntime` methods that return `()`, this is a `DemoState`-only
-    /// hit-test that can meaningfully report whether a panel was found.
+    /// Focus the panel at viewport coordinates. Returns `true` if a panel was hit.
     pub fn focus_at(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
         let (Some(frame), Some(rt)) = (&self.last_frame, &mut self.runtime) else {
             return false;
@@ -405,7 +377,6 @@ impl DemoState {
 
     // -- Drag-to-resize --
 
-    /// Check if a resize boundary is near the point. Returns axis for cursor styling.
     pub fn boundary_hover(&self, x: f32, y: f32) -> Option<BoundaryAxis> {
         let frame = self.last_frame.as_ref()?;
         let tolerance = 4.0 * self.cell;
@@ -413,7 +384,6 @@ impl DemoState {
         Some(hit.axis)
     }
 
-    /// Begin a drag if pointer is on a boundary. Returns true if drag started.
     pub fn drag_start(&mut self, x: f32, y: f32) -> bool {
         let Some(frame) = &self.last_frame else {
             return false;
@@ -429,7 +399,6 @@ impl DemoState {
         true
     }
 
-    /// Continue a drag, applying resize delta. Returns true if resize occurred.
     pub fn drag_move(&mut self, x: f32, y: f32) -> bool {
         let Some(drag) = &mut self.drag else {
             return false;
@@ -459,12 +428,10 @@ impl DemoState {
         rt.resize_boundary(pid, frac).is_ok()
     }
 
-    /// Whether a drag is currently active.
     pub fn is_dragging(&self) -> bool {
         self.drag.is_some()
     }
 
-    /// End the current drag.
     pub fn drag_end(&mut self) {
         self.drag = None;
     }
@@ -580,9 +547,6 @@ impl DemoState {
     // -- Snapshot --
 
     /// Save layout state for persistence.
-    ///
-    /// Returns `None` if no runtime is available (e.g. adaptive preset
-    /// before first resolve) or if the runtime cannot produce a snapshot.
     pub fn snapshot(&self) -> Option<DemoSnapshot> {
         let rt = self.runtime.as_ref()?;
         let layout = rt.snapshot().ok()?;
@@ -590,9 +554,6 @@ impl DemoState {
     }
 
     /// Restore layout state from a snapshot.
-    ///
-    /// Rebuilds the runtime from the snapshot and sets the preset index
-    /// to match the saved preset name.
     pub fn restore(&mut self, snap: DemoSnapshot) -> Result<(), DemoError> {
         let idx = self.preset_index_for_name(snap.preset())?;
         let (_, layout) = snap.into_layout();
@@ -615,11 +576,7 @@ impl DemoState {
         self.help_visible
     }
 
-    /// Set the number of help bindings for dynamic overlay sizing.
-    ///
-    /// Call this after construction if the renderer uses a different
-    /// binding set (e.g. `HELP_BINDINGS_GUI`). The overlay height is
-    /// recomputed on the next `toggle_help` or preset switch.
+    /// Set the number of help bindings. Recomputes overlay height.
     pub fn set_help_binding_count(&mut self, count: usize) {
         self.help_binding_count = count;
         let Some(rt) = &mut self.runtime else { return };
@@ -635,7 +592,6 @@ impl DemoState {
         let _ = rt.set_overlay_height(presets::HELP_OVERLAY_KIND, height);
     }
 
-    /// The overlay diff from the most recent `resolve()` call.
     pub fn last_overlay_diff(&self) -> OverlayDiff<'_> {
         match self.runtime.as_ref() {
             Some(rt) => rt.last_overlay_diff(),
@@ -651,10 +607,7 @@ impl DemoState {
 
     // -- Action dispatch --
 
-    /// Apply an input action and return whether the layout may have changed.
-    ///
-    /// Renderers use the return value to decide whether to snapshot for
-    /// animation. Theme cycling returns `false` — only visual, no geometry.
+    /// Apply an input action. Returns `true` if the layout geometry may have changed.
     pub fn apply(&mut self, action: Action) -> bool {
         let changed = action.changes_layout();
         match action {
@@ -707,7 +660,6 @@ impl DemoState {
         Ok(frame)
     }
 
-    /// Rebuild the adaptive runtime if the viewport crossed a breakpoint.
     fn maybe_rebuild_adaptive(&mut self, width: f32) {
         let tier = presets::breakpoint_tier(width);
         match self.adaptive_tier {
@@ -724,10 +676,6 @@ impl DemoState {
         );
     }
 
-    /// The frame produced by the most recent `resolve()` call.
-    ///
-    /// Renderers that need the layout between resolve cycles (e.g. for
-    /// overlay resolution) can borrow this instead of keeping their own clone.
     pub fn last_frame(&self) -> Option<&PanesFrame> {
         self.last_frame.as_ref()
     }
@@ -745,12 +693,10 @@ impl DemoState {
         }
     }
 
-    /// Direct access to the runtime for renderer-specific operations.
     pub fn runtime(&self) -> Option<&LayoutRuntime> {
         self.runtime.as_ref()
     }
 
-    /// Mutable access to the runtime for renderer-specific operations.
     pub fn runtime_mut(&mut self) -> Option<&mut LayoutRuntime> {
         self.runtime.as_mut()
     }

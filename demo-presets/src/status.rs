@@ -2,17 +2,17 @@ use std::borrow::Cow;
 
 use crate::DemoState;
 
+/// Raw status values — renderers format these however they need.
 pub struct StatusData<'a> {
     pub preset_name: &'a str,
-    /// Pre-formatted with leading space: " (N/M)"
-    pub preset_position: Box<str>,
+    pub preset_idx: usize,
+    pub preset_count: usize,
     pub theme_name: &'a str,
-    /// Pre-formatted with brackets: " [style]"
-    pub theme_style: Box<str>,
-    /// Pre-formatted with leading space: " (N/M)"
-    pub theme_position: Box<str>,
-    /// Pre-formatted with leading separator: " │ panels: N" or " │ [fixed]"
-    pub panel_marker: Box<str>,
+    pub theme_style: &'a str,
+    pub theme_idx: usize,
+    pub theme_count: usize,
+    pub panel_count: usize,
+    pub is_dynamic: bool,
     pub focus_text: Cow<'a, str>,
 }
 
@@ -20,11 +20,6 @@ pub fn status_data(state: &DemoState) -> StatusData<'_> {
     let (theme_name, theme_style): (&str, &str) = match state.current_theme() {
         Some(info) => (info.name.as_ref(), info.style.as_ref()),
         None => ("unknown", "unknown"),
-    };
-
-    let panel_marker: Box<str> = match state.is_dynamic() {
-        true => format!(" │ panels: {}", state.panel_count()).into_boxed_str(),
-        false => Box::from(" │ [fixed]"),
     };
 
     let focus_text = match (state.focused_pid(), state.focused_kind()) {
@@ -35,13 +30,14 @@ pub fn status_data(state: &DemoState) -> StatusData<'_> {
 
     StatusData {
         preset_name: state.preset_name(),
-        preset_position: format!(" ({}/{})", state.preset_idx() + 1, state.preset_count())
-            .into_boxed_str(),
+        preset_idx: state.preset_idx(),
+        preset_count: state.preset_count(),
         theme_name,
-        theme_style: format!(" [{}]", theme_style).into_boxed_str(),
-        theme_position: format!(" ({}/{})", state.theme_idx() + 1, state.theme_count())
-            .into_boxed_str(),
-        panel_marker,
+        theme_style,
+        theme_idx: state.theme_idx(),
+        theme_count: state.theme_count(),
+        panel_count: state.panel_count(),
+        is_dynamic: state.is_dynamic(),
         focus_text,
     }
 }

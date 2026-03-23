@@ -19,7 +19,6 @@ pub enum BreakpointTier {
 const BREAKPOINT_MEDIUM: f32 = 80.0;
 const BREAKPOINT_WIDE: f32 = 160.0;
 
-/// Determine the breakpoint tier for a given viewport width.
 pub fn breakpoint_tier(width: f32) -> BreakpointTier {
     match () {
         () if width >= BREAKPOINT_WIDE => BreakpointTier::Wide,
@@ -29,9 +28,6 @@ pub fn breakpoint_tier(width: f32) -> BreakpointTier {
 }
 
 /// Build a runtime for the adaptive preset at a given breakpoint tier.
-///
-/// Delegates to `build_preset` so layout parameters (ratios, gaps) stay
-/// in one place.
 pub fn build_adaptive(
     panels: &[Arc<str>],
     cell: f32,
@@ -47,7 +43,7 @@ pub fn build_adaptive(
     crate::state::build_preset(info, panels, cell)
 }
 
-/// Content+status chrome layout: content area grows, status bar is fixed height.
+/// Content area + fixed-height status bar.
 pub fn build_chrome() -> Option<LayoutRuntime> {
     let layout = Layout::build_col(|c| {
         c.panel("content");
@@ -57,18 +53,13 @@ pub fn build_chrome() -> Option<LayoutRuntime> {
     Some(LayoutRuntime::new(layout.into()))
 }
 
-/// Help overlay: centered, 60% wide, fixed height for content.
 pub fn help_overlay() -> Overlay {
     Overlay::center().percent_width(60.0).height(14.0)
 }
 
-/// The overlay kind used for the help panel.
 pub const HELP_OVERLAY_KIND: &str = "help";
 
-/// No-strategy runtime with hyprland-style auto-tiling.
-///
-/// Panels are seeded in a flat row. Adding panels splits the focused panel
-/// based on aspect ratio. Resize works on all sibling boundaries.
+/// Flat row of panels with no tiling strategy (hyprland-style auto-tiling).
 pub fn build_default(panels: &[Arc<str>], gap: f32) -> Result<LayoutRuntime, PaneError> {
     let mut tree = LayoutTree::new();
     let mut sequence = PanelSequence::default();
@@ -84,9 +75,6 @@ pub fn build_default(panels: &[Arc<str>], gap: f32) -> Result<LayoutRuntime, Pan
 }
 
 /// Build overlay definitions for the CSS dashboard.
-///
-/// Creates a temporary runtime to obtain `OverlayDef` values that
-/// `panes_css::emit_full` needs for overlay positioning CSS.
 pub fn build_css_overlay_defs(layout: Layout) -> Result<Box<[OverlayDef]>, PaneError> {
     let mut rt = LayoutRuntime::from(layout);
     rt.add_overlay(HELP_OVERLAY_KIND, help_overlay())?;
@@ -94,17 +82,12 @@ pub fn build_css_overlay_defs(layout: Layout) -> Result<Box<[OverlayDef]>, PaneE
 }
 
 /// CSS showcase dashboard layout with overlay definitions.
-///
-/// Builds the dashboard layout once and derives overlay defs from it,
-/// returning both for use with `panes_css::emit_full`.
 pub fn build_css_dashboard_with_overlays() -> Result<(Layout, Box<[OverlayDef]>), PaneError> {
-    let layout = build_css_dashboard()?;
-    let overlay_defs = build_css_overlay_defs(layout)?;
+    let overlay_defs = build_css_overlay_defs(build_css_dashboard()?)?;
     let layout = build_css_dashboard()?;
     Ok((layout, overlay_defs))
 }
 
-/// CSS showcase dashboard layout.
 pub fn build_css_dashboard() -> Result<Layout, PaneError> {
     Layout::dashboard([
         ("base-colors", CardSpan::Columns(2)),

@@ -14,9 +14,7 @@ fn snapshot_path() -> Option<&'static Path> {
     .as_deref()
 }
 
-/// Save layout state to `~/.config/p3-demo/layout.json`.
-///
-/// Silently does nothing if the snapshot cannot be taken or written.
+/// Save layout state to `~/.config/p3-demo/layout.json`. Silent on failure.
 pub fn save_snapshot(state: &DemoState) {
     let Some(snap) = state.snapshot() else { return };
     let Some(path) = snapshot_path() else { return };
@@ -29,9 +27,7 @@ pub fn save_snapshot(state: &DemoState) {
     let _ = serde_json::to_writer(BufWriter::new(file), &snap);
 }
 
-/// Load layout state from `~/.config/p3-demo/layout.json`.
-///
-/// Silently does nothing if the file doesn't exist or can't be parsed.
+/// Load layout state from `~/.config/p3-demo/layout.json`. Silent on failure.
 pub fn load_snapshot(state: &mut DemoState) {
     let Some(path) = snapshot_path() else { return };
     let Ok(file) = std::fs::File::open(path) else {

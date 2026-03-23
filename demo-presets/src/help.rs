@@ -3,8 +3,6 @@ pub struct HelpBinding {
     pub action: &'static str,
 }
 
-/// Build a `&'static [HelpBinding]` from shared head entries,
-/// renderer-specific entries, shared tail entries, and optional extras.
 macro_rules! help_bindings {
     (specific: [$($spec:expr),* $(,)?] $(, extra: [$($ext:expr),* $(,)?])?) => {
         &[
@@ -27,7 +25,7 @@ macro_rules! help_bindings {
     };
 }
 
-/// Build a compact one-line summary of help bindings for a status bar.
+/// Compact one-line summary of help bindings for a status bar.
 pub fn build_help_line(bindings: &[HelpBinding]) -> Box<str> {
     let mut buf = String::with_capacity(256);
     buf.push(' ');

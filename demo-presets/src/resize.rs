@@ -1,7 +1,5 @@
 use panes::{Constraints, Node, NodeId, PaneError, PanelId};
 
-/// Check whether a tree node is a vertical container (Col or column-direction
-/// TaffyPassthrough).
 fn is_vertical_container(node: &Node) -> bool {
     match node {
         Node::Col { .. } => true,
@@ -14,9 +12,6 @@ fn is_vertical_container(node: &Node) -> bool {
 }
 
 /// Walk up from `pid` to find the nearest vertical ancestor container.
-///
-/// Returns `(container_nid, target_child)` where `target_child` is the direct
-/// child of the container that is (or contains) the panel.
 pub(crate) fn find_vertical_ancestor(
     tree: &panes::LayoutTree,
     pid: PanelId,
@@ -34,11 +29,20 @@ pub(crate) fn find_vertical_ancestor(
     }
 }
 
-/// Redistribute grow weights among panel children of `container`, giving
-/// `delta` more share to `target_child`.
-///
-/// Only handles containers whose direct children are all `Node::Panel`.
-/// Returns `Err` if any child is a container (caller should silently ignore).
+fn panel_sibling_info(
+    tree: &panes::LayoutTree,
+    nid: NodeId,
+) -> Result<(NodeId, PanelId, Constraints), PaneError> {
+    let node = tree.node(nid).ok_or(PaneError::NodeNotFound(nid))?;
+    match node {
+        Node::Panel {
+            id, constraints, ..
+        } => Ok((nid, *id, *constraints)),
+        _ => Err(PaneError::NodeNotFound(nid)),
+    }
+}
+
+/// Redistribute grow weights, giving `delta` more share to `target_child`.
 pub(crate) fn redistribute_panel_grow(
     tree: &mut panes::LayoutTree,
     container: NodeId,
@@ -51,15 +55,7 @@ pub(crate) fn redistribute_panel_grow(
         .children(container)?
         .iter()
         .copied()
-        .map(|nid| {
-            let node = tree.node(nid).ok_or(PaneError::NodeNotFound(nid))?;
-            match node {
-                Node::Panel {
-                    id, constraints, ..
-                } => Ok((nid, *id, *constraints)),
-                _ => Err(PaneError::NodeNotFound(nid)),
-            }
-        })
+        .map(|nid| panel_sibling_info(tree, nid))
         .collect::<Result<Vec<_>, _>>()?
         .into_boxed_slice();
 
