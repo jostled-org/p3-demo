@@ -21,6 +21,9 @@ pub enum Action {
     ResizeVertical(f32),
     ScrollBy(f32),
     FocusAt(f32, f32),
+    DragStart(f32, f32),
+    DragMove(f32, f32),
+    DragEnd,
     ToggleHelp,
 }
 

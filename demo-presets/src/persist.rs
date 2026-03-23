@@ -1,12 +1,17 @@
 use std::io::{BufReader, BufWriter};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::snapshot::DemoSnapshot;
 use crate::state::DemoState;
 
-fn snapshot_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".config/p3-demo/layout.json"))
+fn snapshot_path() -> Option<&'static Path> {
+    static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let home = std::env::var_os("HOME")?;
+        Some(PathBuf::from(home).join(".config/p3-demo/layout.json"))
+    })
+    .as_deref()
 }
 
 /// Save layout state to `~/.config/p3-demo/layout.json`.

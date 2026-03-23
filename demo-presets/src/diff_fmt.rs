@@ -1,6 +1,6 @@
 use panes::diff::LayoutDiff;
 
-pub fn format_diff_counts(diff: &LayoutDiff<'_>) -> String {
+pub fn format_diff_counts(diff: &LayoutDiff<'_>) -> Box<str> {
     format!(
         "+{} -{} ~{} ={} >{}",
         diff.added.len(),
@@ -9,4 +9,5 @@ pub fn format_diff_counts(diff: &LayoutDiff<'_>) -> String {
         diff.unchanged.len(),
         diff.moved.len(),
     )
+    .into_boxed_str()
 }

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::{env, fs, io, path};
 
-use demo_presets::{build_css_dashboard, is_light, text_on_color};
+use demo_presets::{build_css_dashboard_with_overlays, text_on_color};
 
 use palette_core::color::Color;
 use palette_core::contrast::ContrastLevel;
@@ -145,7 +145,7 @@ fn generate_theme_options(registry: &Registry, themes: &[ThemeInfo]) -> String {
         let opt = format!("        <option value=\"{}\">{}</option>", t.id, t.name);
         let light_theme = registry
             .load(&t.id)
-            .map(|p| is_light(&p.resolve().base.background))
+            .map(|p| p.resolve().is_light())
             .unwrap_or(false);
         match light_theme {
             true => light.push(opt),
@@ -178,14 +178,9 @@ fn generate_css(registry: &Registry, themes: &[ThemeInfo]) -> Result<String, Err
     // -- Reset & component styles --
     css.push_str(COMPONENT_CSS);
 
-    // -- panes-css layout --
-    let layout = build_css_dashboard()?;
-    css.push_str(&panes_css::emit(&layout));
-    // Override panes-css app-panel sizing for content-sized cards
-    css.push_str(
-        "\n[data-pane-node=\"1\"] { grid-auto-rows: auto; }\
-         \n[data-pane-node=\"1\"] > [data-pane-node] { align-self: start; }\n",
-    );
+    // -- panes-css layout + overlay positioning --
+    let (layout, overlay_defs) = build_css_dashboard_with_overlays()?;
+    css.push_str(&panes_css::emit_full(&layout, &overlay_defs));
 
     // -- First theme as :root default (renders before JS) --
     let first = registry
@@ -212,6 +207,8 @@ fn generate_css(registry: &Registry, themes: &[ThemeInfo]) -> Result<String, Err
 }
 
 const COMPONENT_CSS: &str = r#"
+html:not(.loaded) * { transition: none !important; }
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
@@ -300,6 +297,75 @@ body {
 .wcag-toggle input:focus-visible + .toggle-track {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
+}
+
+/* Help toggle button */
+.help-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-hi);
+  background: var(--bg-dark);
+  color: var(--fg);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, border-color 0.2s;
+}
+.help-btn:hover { background: var(--bg-hi); }
+.help-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+
+/* Help overlay content (positioning from panes-css) */
+[data-pane-overlay] {
+  transition: opacity 0.2s;
+}
+[data-overlay-visible="false"] {
+  opacity: 0;
+  pointer-events: none;
+}
+[data-overlay-visible="true"] {
+  opacity: 1;
+}
+.help-content {
+  background: var(--ui-float);
+  border: 1px solid var(--border-hi);
+  border-radius: 10px;
+  padding: 1.5rem;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.24);
+  color: var(--fg);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.help-content h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-title);
+  margin-bottom: 1rem;
+}
+.help-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.help-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.help-table td:first-child {
+  white-space: nowrap;
+  width: 1%;
+}
+.help-table kbd {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  background: var(--bg-hi);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.85rem;
 }
 
 /* Root layout cosmetics (grid rules emitted by panes-css) */
@@ -504,6 +570,7 @@ fn body_content(theme_options: &str) -> String {
       <span class="toggle-track"><span class="toggle-knob"></span></span>
       <span>WCAG AA</span>
     </label>
+    <button class="help-btn" id="help-toggle" aria-label="Toggle help">?</button>
   </header>
   <main data-pane-root>
     <div data-pane-node="1">
@@ -579,6 +646,23 @@ fn body_content(theme_options: &str) -> String {
     }
 
     html.push_str("    </div>\n  </main>\n");
+
+    // Help overlay
+    let _ = write!(
+        html,
+        r#"  <div data-pane-overlay="help" data-overlay-visible="false">
+    <div class="help-content">
+      <h2>Keyboard Shortcuts</h2>
+      <table class="help-table">
+        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous / Next theme</td></tr>
+        <tr><td><kbd>W</kbd></td><td>Toggle WCAG AA</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
+      </table>
+    </div>
+  </div>
+"#
+    );
+
     html
 }
 
@@ -844,6 +928,36 @@ fn theme_js() -> &'static str {
         requestAnimationFrame(() => setTimeout(updateSwatches, 50));
       });
       requestAnimationFrame(updateSwatches);
+      requestAnimationFrame(() => document.documentElement.classList.add('loaded'));
+
+      // Help overlay toggle
+      const helpBtn = document.getElementById('help-toggle');
+      const overlay = document.querySelector('[data-pane-overlay]');
+      function toggleHelp() {
+        const vis = overlay.getAttribute('data-overlay-visible') === 'true';
+        overlay.setAttribute('data-overlay-visible', vis ? 'false' : 'true');
+      }
+      helpBtn.addEventListener('click', toggleHelp);
+
+      // Keyboard shortcuts
+      document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+        switch (e.key) {
+          case '?': toggleHelp(); break;
+          case 'ArrowLeft':
+            sel.selectedIndex = Math.max(0, sel.selectedIndex - 1);
+            sel.dispatchEvent(new Event('change'));
+            break;
+          case 'ArrowRight':
+            sel.selectedIndex = Math.min(sel.options.length - 1, sel.selectedIndex + 1);
+            sel.dispatchEvent(new Event('change'));
+            break;
+          case 'w': case 'W':
+            wcag.checked = !wcag.checked;
+            wcag.dispatchEvent(new Event('change'));
+            break;
+        }
+      });
     </script>"##
 }
 

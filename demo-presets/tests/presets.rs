@@ -1,4 +1,8 @@
-use demo_presets::{Action, DemoState, build_chrome, build_css_dashboard, build_default};
+use demo_presets::{
+    Action, DemoState, build_chrome, build_css_dashboard, build_css_dashboard_with_overlays,
+    build_default,
+};
+use panes_css;
 
 #[test]
 fn build_chrome_returns_some() {
@@ -89,6 +93,38 @@ fn action_changes_layout_reflects_variant() {
     assert!(Action::ToggleHelp.changes_layout());
     assert!(!Action::NextTheme.changes_layout());
     assert!(!Action::PrevTheme.changes_layout());
+}
+
+#[test]
+fn css_dashboard_with_overlay_emits_overlay_css() {
+    let (layout, overlay_defs) = build_css_dashboard_with_overlays().unwrap();
+    let css = panes_css::emit_full(&layout, &overlay_defs);
+    assert!(
+        css.contains("data-pane-overlay"),
+        "expected CSS to contain overlay selectors"
+    );
+    assert!(
+        css.contains("position"),
+        "expected CSS to contain position rules"
+    );
+    assert!(
+        css.contains("z-index"),
+        "expected CSS to contain z-index rules"
+    );
+}
+
+#[test]
+fn css_dashboard_emits_transition_properties() {
+    let layout = build_css_dashboard().unwrap();
+    let css = panes_css::emit_with_transitions(&layout);
+    assert!(
+        css.contains("transition"),
+        "expected CSS to contain transition properties"
+    );
+    assert!(
+        !css.contains("grid-auto-rows: 1fr"),
+        "auto_rows should not emit grid-auto-rows: 1fr"
+    );
 }
 
 #[test]

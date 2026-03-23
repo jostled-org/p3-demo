@@ -47,7 +47,7 @@ pub(crate) fn redistribute_panel_grow(
 ) -> Result<(), PaneError> {
     const EPSILON: f32 = 0.001;
 
-    let siblings: Vec<(NodeId, PanelId, f32)> = tree
+    let siblings: Box<[(NodeId, PanelId, Constraints)]> = tree
         .children(container)?
         .iter()
         .copied()
@@ -56,17 +56,22 @@ pub(crate) fn redistribute_panel_grow(
             match node {
                 Node::Panel {
                     id, constraints, ..
-                } => Ok((nid, *id, constraints.grow.unwrap_or(1.0))),
+                } => Ok((nid, *id, *constraints)),
                 _ => Err(PaneError::NodeNotFound(nid)),
             }
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_boxed_slice();
 
-    let total_grow: f32 = siblings.iter().map(|&(_, _, g)| g).sum();
+    let total_grow: f32 = siblings
+        .iter()
+        .map(|&(_, _, c)| c.grow.unwrap_or(1.0))
+        .sum();
     let target = siblings.iter().find(|&&(nid, _, _)| nid == target_child);
-    let Some(&(_, _, target_grow)) = target else {
+    let Some(&(_, _, target_c)) = target else {
         return Ok(());
     };
+    let target_grow = target_c.grow.unwrap_or(1.0);
 
     let current_share = target_grow / total_grow;
     let max_share = 1.0 - EPSILON * (siblings.len() - 1) as f32;
@@ -77,12 +82,12 @@ pub(crate) fn redistribute_panel_grow(
     let new_share = (current_share + delta).clamp(EPSILON, max_share);
     let scale = (1.0 - new_share) / (1.0 - current_share);
 
-    for &(nid, pid, grow) in &siblings {
+    for &(nid, pid, c) in &siblings {
+        let grow = c.grow.unwrap_or(1.0);
         let new_grow = match nid == target_child {
             true => new_share * total_grow,
             false => (grow * scale).max(EPSILON),
         };
-        let c = tree.panel_constraints(pid)?;
         tree.set_constraints(
             pid,
             Constraints {

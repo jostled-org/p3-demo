@@ -4,7 +4,10 @@ use palette_core::registry::{Registry, ThemeInfo};
 use palette_core::{Palette, PaletteError};
 use panes::diff::{LayoutDiff, OverlayDiff};
 use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
-use panes::{FocusDirection, Layout, PaneError, PanelId, PanelInputKind, PresetInfo};
+use panes::{
+    BoundaryAxis, BoundaryHit, FocusDirection, Layout, Node, PaneError, PanelId, PanelInputKind,
+    PresetInfo,
+};
 
 use crate::action::Action;
 use crate::help;
@@ -13,7 +16,7 @@ use crate::presets::BreakpointTier;
 use crate::resize;
 use crate::snapshot::DemoSnapshot;
 
-pub const DEFAULT_PANELS: &[&str] = &["editor", "terminal", "logs"];
+pub(crate) const DEFAULT_PANELS: &[&str] = &["editor", "terminal", "logs"];
 
 #[derive(thiserror::Error, Debug)]
 pub enum DemoError {
@@ -46,6 +49,7 @@ pub enum DemoError {
 /// Returns `None` for unrecognized preset names.
 pub fn build_preset(info: &PresetInfo, panels: &[Arc<str>], cell: f32) -> Option<LayoutRuntime> {
     let iter = || panels.iter().map(Arc::clone);
+    let cards = || -> Vec<(Arc<str>, usize)> { iter().map(|p| (p, 1)).collect() };
     let gap = cell;
     let rt = match info.name {
         "master-stack" => Layout::master_stack(iter())
@@ -60,23 +64,20 @@ pub fn build_preset(info: &PresetInfo, panels: &[Arc<str>], cell: f32) -> Option
         "scrollable" => Layout::scrollable(iter()).gap(gap).into_runtime(),
         "dwindle" => Layout::dwindle(iter()).ratio(0.5).gap(gap).into_runtime(),
         "spiral" => Layout::spiral(iter()).ratio(0.5).gap(gap).into_runtime(),
-        "columns" | "grid" => {
-            let cards: Vec<(Arc<str>, usize)> = iter().map(|p| (p, 1)).collect();
-            Layout::dashboard(cards).columns(3).gap(gap).into_runtime()
-        }
+        "columns" | "grid" => Layout::dashboard(cards())
+            .columns(3)
+            .gap(gap)
+            .into_runtime(),
         "deck" => Layout::deck(iter())
             .master_ratio(0.7)
             .gap(gap)
             .into_runtime(),
         "tabbed" => Layout::tabbed(iter()).bar_height(3.0 * cell).into_runtime(),
         "stacked" => Layout::stacked(iter()).bar_height(cell).into_runtime(),
-        "dashboard" => {
-            let cards: Vec<(Arc<str>, usize)> = panels.iter().map(|p| (Arc::clone(p), 1)).collect();
-            Layout::dashboard(cards)
-                .auto_fill(30.0 * cell)
-                .gap(gap)
-                .into_runtime()
-        }
+        "dashboard" => Layout::dashboard(cards())
+            .auto_fill(30.0 * cell)
+            .gap(gap)
+            .into_runtime(),
         "split" => {
             let first = panels.first().map(Arc::clone)?;
             let second = panels.get(1).map_or_else(|| Arc::from("empty"), Arc::clone);
@@ -122,6 +123,29 @@ fn help_overlay_height(binding_count: usize, cell: f32) -> f32 {
     (binding_count as f32 + 2.0) * cell
 }
 
+/// Pick a `PanelId` from a `BoundaryHit` for resize.
+///
+/// Returns the panel id and a sign multiplier (+1 or -1) so that a positive
+/// pixel delta in the boundary's axis maps to a positive resize delta.
+/// `sides.0` is the before-sibling (left/top); if it is a panel, sign is +1.
+/// Otherwise falls back to `sides.1` (right/bottom) with sign -1.
+fn boundary_panel_id(rt: &LayoutRuntime, hit: BoundaryHit) -> Option<(PanelId, f32)> {
+    let tree = rt.tree();
+    if let Some(Node::Panel { id, .. }) = tree.node(hit.sides.0) {
+        return Some((*id, 1.0));
+    }
+    if let Some(Node::Panel { id, .. }) = tree.node(hit.sides.1) {
+        return Some((*id, -1.0));
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DragState {
+    boundary: BoundaryHit,
+    last: (f32, f32),
+}
+
 /// Shared state machine for all p3-demo renderers.
 ///
 /// Manages presets, themes, panels, focus, and layout resolution.
@@ -129,6 +153,8 @@ fn help_overlay_height(binding_count: usize, cell: f32) -> f32 {
 pub struct DemoState {
     runtime: Option<LayoutRuntime>,
     last_frame: Option<PanesFrame>,
+    last_viewport: (f32, f32),
+    drag: Option<DragState>,
     panels: Vec<Arc<str>>,
     next_panel_id: usize,
     presets: &'static [PresetInfo],
@@ -168,6 +194,8 @@ impl DemoState {
         Ok(Self {
             runtime,
             last_frame: None,
+            last_viewport: (0.0, 0.0),
+            drag: None,
             panels,
             next_panel_id: DEFAULT_PANELS.len() + 1,
             presets,
@@ -229,24 +257,20 @@ impl DemoState {
     }
 
     pub fn switch_preset(&mut self, name: &str) -> Result<(), DemoError> {
+        let idx = self.preset_index_for_name(name)?;
+        self.set_preset(idx);
+        Ok(())
+    }
+
+    fn preset_index_for_name(&self, name: &str) -> Result<usize, DemoError> {
         match name {
-            "default" => {
-                self.set_preset(self.presets.len());
-                Ok(())
-            }
-            "adaptive" => {
-                self.set_preset(self.presets.len() + 1);
-                Ok(())
-            }
-            _ => {
-                let idx = self
-                    .presets
-                    .iter()
-                    .position(|p| p.name == name)
-                    .ok_or_else(|| DemoError::UnknownPreset(Box::from(name)))?;
-                self.set_preset(idx);
-                Ok(())
-            }
+            "default" => Ok(self.presets.len()),
+            "adaptive" => Ok(self.presets.len() + 1),
+            _ => self
+                .presets
+                .iter()
+                .position(|p| p.name == name)
+                .ok_or_else(|| DemoError::UnknownPreset(Box::from(name))),
         }
     }
 
@@ -363,8 +387,8 @@ impl DemoState {
 
     /// Focus the panel at viewport coordinates, if any.
     ///
-    /// Iterates panels from the last `resolve()` call and checks
-    /// `Rect::contains`. Returns `true` if a panel was focused.
+    /// Uses `panel_at_point` from the last resolved layout for hit-testing.
+    /// Returns `true` if a panel was focused.
     ///
     /// Unlike `focus_next`/`focus_prev`/`focus_direction`, which delegate to
     /// `LayoutRuntime` methods that return `()`, this is a `DemoState`-only
@@ -373,13 +397,76 @@ impl DemoState {
         let (Some(frame), Some(rt)) = (&self.last_frame, &mut self.runtime) else {
             return false;
         };
-        let layout = frame.layout();
-        for entry in layout.panels() {
-            if entry.rect.contains(viewport_x, viewport_y) {
-                return rt.focus(entry.id);
-            }
-        }
-        false
+        let Some(pid) = frame.layout().panel_at_point(viewport_x, viewport_y) else {
+            return false;
+        };
+        rt.focus(pid)
+    }
+
+    // -- Drag-to-resize --
+
+    /// Check if a resize boundary is near the point. Returns axis for cursor styling.
+    pub fn boundary_hover(&self, x: f32, y: f32) -> Option<BoundaryAxis> {
+        let frame = self.last_frame.as_ref()?;
+        let tolerance = 4.0 * self.cell;
+        let hit = frame.layout().boundary_at_point(x, y, tolerance)?;
+        Some(hit.axis)
+    }
+
+    /// Begin a drag if pointer is on a boundary. Returns true if drag started.
+    pub fn drag_start(&mut self, x: f32, y: f32) -> bool {
+        let Some(frame) = &self.last_frame else {
+            return false;
+        };
+        let tolerance = 4.0 * self.cell;
+        let Some(boundary) = frame.layout().boundary_at_point(x, y, tolerance) else {
+            return false;
+        };
+        self.drag = Some(DragState {
+            boundary,
+            last: (x, y),
+        });
+        true
+    }
+
+    /// Continue a drag, applying resize delta. Returns true if resize occurred.
+    pub fn drag_move(&mut self, x: f32, y: f32) -> bool {
+        let Some(drag) = &mut self.drag else {
+            return false;
+        };
+        let delta = match drag.boundary.axis {
+            BoundaryAxis::Vertical => x - drag.last.0,
+            BoundaryAxis::Horizontal => y - drag.last.1,
+        };
+        let axis = drag.boundary.axis;
+        let boundary = drag.boundary;
+        drag.last = (x, y);
+
+        let Some(rt) = &mut self.runtime else {
+            return false;
+        };
+        let Some((pid, sign)) = boundary_panel_id(rt, boundary) else {
+            return false;
+        };
+        let viewport = match axis {
+            BoundaryAxis::Vertical => self.last_viewport.0,
+            BoundaryAxis::Horizontal => self.last_viewport.1,
+        };
+        let frac = match viewport > 0.0 {
+            true => delta * sign / viewport,
+            false => 0.0,
+        };
+        rt.resize_boundary(pid, frac).is_ok()
+    }
+
+    /// Whether a drag is currently active.
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// End the current drag.
+    pub fn drag_end(&mut self) {
+        self.drag = None;
     }
 
     // -- Panel mutations --
@@ -507,20 +594,10 @@ impl DemoState {
     /// Rebuilds the runtime from the snapshot and sets the preset index
     /// to match the saved preset name.
     pub fn restore(&mut self, snap: DemoSnapshot) -> Result<(), DemoError> {
-        let (preset, layout) = snap.into_layout();
+        let idx = self.preset_index_for_name(snap.preset())?;
+        let (_, layout) = snap.into_layout();
         let rt = LayoutRuntime::from_snapshot(layout)?;
-        match &*preset {
-            "default" => self.preset_idx = self.presets.len(),
-            "adaptive" => self.preset_idx = self.presets.len() + 1,
-            name => {
-                let idx = self
-                    .presets
-                    .iter()
-                    .position(|p| p.name == name)
-                    .ok_or_else(|| DemoError::UnknownPreset(preset.clone()))?;
-                self.preset_idx = idx;
-            }
-        }
+        self.preset_idx = idx;
         self.adaptive_tier = None;
         self.runtime = Some(rt);
         attach_help_overlay(
@@ -605,6 +682,13 @@ impl DemoState {
             Action::FocusAt(x, y) => {
                 let _ = self.focus_at(x, y);
             }
+            Action::DragStart(x, y) => {
+                let _ = self.drag_start(x, y);
+            }
+            Action::DragMove(x, y) => {
+                let _ = self.drag_move(x, y);
+            }
+            Action::DragEnd => self.drag_end(),
             Action::ToggleHelp => self.toggle_help(),
         }
         changed
@@ -619,6 +703,7 @@ impl DemoState {
         let rt = self.runtime.as_mut().ok_or(DemoError::NoRuntime)?;
         let frame = rt.resolve(width, height)?;
         self.last_frame = Some(frame.clone());
+        self.last_viewport = (width, height);
         Ok(frame)
     }
 

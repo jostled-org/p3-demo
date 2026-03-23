@@ -28,7 +28,7 @@ pub fn chromatic_colors(resolved: &ResolvedPalette) -> [&Color; 12] {
     out
 }
 
-pub fn is_light(bg: &Color) -> bool {
+fn is_light(bg: &Color) -> bool {
     bg.relative_luminance() > 0.179
 }
 

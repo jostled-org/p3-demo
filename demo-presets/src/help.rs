@@ -19,11 +19,27 @@ macro_rules! help_bindings {
             HelpBinding { key: "+/-", action: "resize horiz" },
             HelpBinding { key: "S+/S-", action: "resize vert" },
             HelpBinding { key: "scroll", action: "scroll layout" },
+            HelpBinding { key: "drag",   action: "drag boundary" },
             HelpBinding { key: "?", action: "toggle help" },
             // --- optional extras ---
             $($($ext,)*)?
         ]
     };
+}
+
+/// Build a compact one-line summary of help bindings for a status bar.
+pub fn build_help_line(bindings: &[HelpBinding]) -> Box<str> {
+    let mut buf = String::with_capacity(256);
+    buf.push(' ');
+    for (i, b) in bindings.iter().enumerate() {
+        if i > 0 {
+            buf.push_str("  ");
+        }
+        buf.push_str(b.key);
+        buf.push(' ');
+        buf.push_str(b.action);
+    }
+    buf.into_boxed_str()
 }
 
 pub const HELP_BINDINGS_TUI: &[HelpBinding] = help_bindings!(

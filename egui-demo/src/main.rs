@@ -1,23 +1,20 @@
 use std::sync::Arc;
 
 use demo_presets::{
-    Action, DemoError, DemoState, HELP_BINDINGS_GUI, chromatic_colors, ease_out,
+    Action, DemoError, DemoState, HELP_BINDINGS_GUI, build_help_line, chromatic_colors, ease_out,
     format_diff_counts, load_snapshot, save_snapshot,
 };
 use eframe::egui;
 use palette_core::Palette;
 use palette_core::egui::{to_color32, to_egui_visuals};
 use palette_core::resolved::ResolvedPalette;
+use panes::BoundaryAxis;
 use panes::{FocusDirection, PanelId};
 use rustc_hash::FxHashMap;
 
 const ANIM_DURATION_SECS: f64 = demo_presets::ANIM_DURATION_SECS as f64;
 
-type InputSnapshot = (
-    Vec<(egui::Key, egui::Modifiers, f64)>,
-    f32,
-    Option<(f64, egui::Pos2)>,
-);
+type InputSnapshot = (Vec<(egui::Key, egui::Modifiers, f64)>, f32, f64);
 
 /// Pre-format help binding strings (called once at startup).
 fn build_help_lines() -> Box<[Box<str>]> {
@@ -62,6 +59,8 @@ struct DemoApp {
     pending_overlays: Vec<OverlayRect>,
     /// Pre-formatted help binding strings (static content, built once)
     cached_help_lines: Box<[Box<str>]>,
+    /// Compact status-bar help summary (static content, built once)
+    cached_help_line: Box<str>,
 }
 
 impl DemoApp {
@@ -75,6 +74,7 @@ impl DemoApp {
         cc.egui_ctx.set_visuals(to_egui_visuals(&palette));
 
         let cached_help_lines = build_help_lines();
+        let cached_help_line = build_help_line(HELP_BINDINGS_GUI);
 
         Ok(Self {
             state,
@@ -88,6 +88,7 @@ impl DemoApp {
             needs_theme_reload: false,
             pending_overlays: Vec::new(),
             cached_help_lines,
+            cached_help_line,
         })
     }
 
@@ -115,8 +116,18 @@ impl DemoApp {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        // Extract key-press tuples, scroll delta, and primary click position
-        let (keys, scroll_delta, click_pos): InputSnapshot = ctx.input(|i| {
+        let (keys, scroll_delta, pointer) = self.collect_input(ctx);
+        for (key, mods, time) in keys {
+            self.handle_key(key, mods, time);
+        }
+        if scroll_delta.abs() > 0.1 {
+            self.state.scroll_by(-scroll_delta);
+        }
+        self.handle_pointer(ctx, pointer);
+    }
+
+    fn collect_input(&self, ctx: &egui::Context) -> InputSnapshot {
+        ctx.input(|i| {
             let keys = i
                 .events
                 .iter()
@@ -130,23 +141,50 @@ impl DemoApp {
                     _ => None,
                 })
                 .collect();
-            let click = i
-                .pointer
-                .button_clicked(egui::PointerButton::Primary)
-                .then(|| i.pointer.interact_pos())
-                .flatten()
-                .map(|pos| (i.time, pos));
-            (keys, i.smooth_scroll_delta.y, click)
+            (keys, i.smooth_scroll_delta.y, i.time)
+        })
+    }
+
+    fn handle_pointer(&mut self, ctx: &egui::Context, time: f64) {
+        let pointer = ctx.input(|i| {
+            (
+                i.pointer.interact_pos(),
+                i.pointer.primary_pressed(),
+                i.pointer.primary_down(),
+                i.pointer.primary_released(),
+            )
         });
-        for (key, mods, time) in keys {
-            self.handle_key(key, mods, time);
-        }
-        if scroll_delta.abs() > 0.1 {
-            self.state.scroll_by(-scroll_delta);
-        }
-        if let Some((time, pos)) = click_pos {
-            self.snapshot_and_animate(time);
-            self.state.apply(Action::FocusAt(pos.x, pos.y));
+        let (Some(pos), pressed, held, released) = pointer else {
+            return;
+        };
+
+        // Hover cursor styling
+        let hover_axis = self.state.boundary_hover(pos.x, pos.y);
+        let cursor = match hover_axis {
+            Some(BoundaryAxis::Vertical) => egui::CursorIcon::ResizeHorizontal,
+            Some(BoundaryAxis::Horizontal) => egui::CursorIcon::ResizeVertical,
+            None => egui::CursorIcon::Default,
+        };
+        ctx.set_cursor_icon(cursor);
+
+        let dragging = self.state.is_dragging();
+        let on_boundary = hover_axis.is_some();
+        match (pressed, held, released, dragging, on_boundary) {
+            (true, _, _, _, true) => {
+                self.snapshot_and_animate(time);
+                self.state.apply(Action::DragStart(pos.x, pos.y));
+            }
+            (true, _, _, _, false) => {
+                self.snapshot_and_animate(time);
+                self.state.apply(Action::FocusAt(pos.x, pos.y));
+            }
+            (_, true, _, true, _) => {
+                self.state.apply(Action::DragMove(pos.x, pos.y));
+            }
+            (_, _, true, true, _) => {
+                self.state.apply(Action::DragEnd);
+            }
+            _ => {}
         }
     }
 
@@ -269,7 +307,7 @@ fn render_status_lines(app: &DemoApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(format!("focus: {}", sd.focus_text));
         ui.separator();
-        ui.label("←/→ preset  ↑/↓ theme  Tab focus  Shift+HJKL spatial  A/D add/rm  C collapse  [/] swap  +/- resize horiz  S+/S- resize vert  ? help");
+        ui.label(&*app.cached_help_line);
     });
 }
 
@@ -439,7 +477,11 @@ fn paint_diff_overlay(
 ) {
     let diff = app.state.last_diff();
     let diff_text = format_diff_counts(&diff);
-    let galley = painter.layout_no_wrap(diff_text, egui::FontId::proportional(11.0), comment_color);
+    let galley = painter.layout_no_wrap(
+        String::from(diff_text),
+        egui::FontId::proportional(11.0),
+        comment_color,
+    );
     let pos = egui::pos2(
         available.min.x + 4.0,
         available.max.y - galley.size().y - 4.0,

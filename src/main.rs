@@ -8,8 +8,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use demo_presets::{
-    Action, DemoError, DemoState, HELP_BINDINGS_TUI, build_chrome, ease_out, format_diff_counts,
-    load_snapshot, save_snapshot, status_data,
+    Action, DemoError, DemoState, HELP_BINDINGS_TUI, build_chrome, build_help_line, ease_out,
+    format_diff_counts, load_snapshot, save_snapshot, status_data,
 };
 use palette_core::terminal::{ResolvedTerminalTheme, style, to_resolved_terminal_theme};
 use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
@@ -69,7 +69,7 @@ impl App {
         let theme = to_resolved_terminal_theme(&palette.resolve());
         let chrome = build_chrome();
 
-        let cached_help_line = build_help_line();
+        let cached_help_line = build_help_line(HELP_BINDINGS_TUI);
         let cached_overlay_lines = build_overlay_lines();
 
         Ok(Self {
@@ -115,21 +115,6 @@ fn build_overlay_lines() -> Box<[Box<str>]> {
         .iter()
         .map(|b| format!("  {:14}{}", b.key, b.action).into_boxed_str())
         .collect()
-}
-
-/// Build the static help-binding summary for the status bar (called once).
-fn build_help_line() -> Box<str> {
-    let mut buf = String::with_capacity(256);
-    buf.push(' ');
-    for (i, b) in HELP_BINDINGS_TUI.iter().enumerate() {
-        if i > 0 {
-            buf.push_str("  ");
-        }
-        buf.push_str(b.key);
-        buf.push(' ');
-        buf.push_str(b.action);
-    }
-    buf.into_boxed_str()
 }
 
 // -- Rendering --
@@ -285,7 +270,7 @@ fn render_layout(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1.min(area.height),
     };
     frame.render_widget(
-        Paragraph::new(diff_text).style(style(
+        Paragraph::new(&*diff_text).style(style(
             app.theme.typography.comment,
             app.theme.base.background,
         )),
@@ -434,12 +419,19 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
 }
 
 fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
-    let action = match mouse.kind {
-        MouseEventKind::ScrollDown => Action::ScrollBy(1.0),
-        MouseEventKind::ScrollUp => Action::ScrollBy(-1.0),
-        MouseEventKind::Down(event::MouseButton::Left) => {
-            Action::FocusAt(f32::from(mouse.column), f32::from(mouse.row))
+    let ptr_x = f32::from(mouse.column);
+    let ptr_y = f32::from(mouse.row);
+    let dragging = app.state.is_dragging();
+    let on_boundary = app.state.boundary_hover(ptr_x, ptr_y).is_some();
+    let action = match (mouse.kind, dragging, on_boundary) {
+        (MouseEventKind::ScrollDown, _, _) => Action::ScrollBy(1.0),
+        (MouseEventKind::ScrollUp, _, _) => Action::ScrollBy(-1.0),
+        (MouseEventKind::Down(event::MouseButton::Left), _, true) => {
+            Action::DragStart(ptr_x, ptr_y)
         }
+        (MouseEventKind::Down(event::MouseButton::Left), _, false) => Action::FocusAt(ptr_x, ptr_y),
+        (MouseEventKind::Drag(event::MouseButton::Left), true, _) => Action::DragMove(ptr_x, ptr_y),
+        (MouseEventKind::Up(event::MouseButton::Left), true, _) => Action::DragEnd,
         _ => return,
     };
     if action.changes_layout() {

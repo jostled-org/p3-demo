@@ -10,5 +10,5 @@ fn empty_diff_formats_all_zeros() {
         resized: &[],
         unchanged: &[],
     };
-    assert_eq!(format_diff_counts(&diff), "+0 -0 ~0 =0 >0");
+    assert_eq!(&*format_diff_counts(&diff), "+0 -0 ~0 =0 >0");
 }

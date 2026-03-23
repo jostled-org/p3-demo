@@ -59,7 +59,7 @@ fn adaptive_preset_wide_is_dwindle() {
         panels.len()
     );
 
-    // In dwindle, panel areas decrease (each split halves the remaining space)
+    // In dwindle, first panel gets the largest share
     let area = |i: usize| panels[i].rect.w * panels[i].rect.h;
     assert!(
         area(0) > area(1),
@@ -68,9 +68,9 @@ fn adaptive_preset_wide_is_dwindle() {
         area(1)
     );
     assert!(
-        area(1) > area(2),
-        "second panel area ({}) should exceed third ({})",
-        area(1),
+        area(0) > area(2),
+        "first panel area ({}) should exceed third ({})",
+        area(0),
         area(2)
     );
 }

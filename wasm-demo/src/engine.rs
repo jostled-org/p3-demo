@@ -27,6 +27,8 @@ fn base_rect(id: u32, kind: &str, rect: WasmRect) -> BaseRect {
 #[wasm_bindgen]
 pub struct JsLayoutEngine {
     state: DemoState,
+    panel_buf: Vec<PanelRect>,
+    overlay_buf: Vec<OverlayRect>,
 }
 
 #[wasm_bindgen]
@@ -36,7 +38,11 @@ impl JsLayoutEngine {
         let mut state = DemoState::new(cell).map_err(to_js_err)?;
         state.set_help_binding_count(HELP_BINDINGS_GUI.len());
         state.switch_preset(preset_name).map_err(to_js_err)?;
-        Ok(Self { state })
+        Ok(Self {
+            state,
+            panel_buf: Vec::new(),
+            overlay_buf: Vec::new(),
+        })
     }
 
     /// Returns JSON: [{id, kind, x, y, w, h, focused, kind_index}]
@@ -45,15 +51,15 @@ impl JsLayoutEngine {
         let layout = frame.layout();
         let focused = self.state.focused_pid();
 
-        let rects: Vec<PanelRect> = panes_wasm::panels(layout)
-            .map(|entry| PanelRect {
+        self.panel_buf.clear();
+        self.panel_buf
+            .extend(panes_wasm::panels(layout).map(|entry| PanelRect {
                 base: base_rect(entry.id.raw(), entry.kind, entry.rect),
                 focused: focused == Some(entry.id),
                 kind_index: entry.kind_index,
-            })
-            .collect();
+            }));
 
-        serde_json::to_string(&rects).map_err(to_js_err)
+        serde_json::to_string(&self.panel_buf).map_err(to_js_err)
     }
 
     /// Returns JSON: {added, removed, resized, moved, unchanged}
@@ -130,19 +136,19 @@ impl JsLayoutEngine {
     ///
     /// Uses the layout from the last `resolve()` call. Call `resolve()` first.
     #[wasm_bindgen(js_name = "resolveOverlays")]
-    pub fn resolve_overlays(&self) -> Result<String, JsValue> {
+    pub fn resolve_overlays(&mut self) -> Result<String, JsValue> {
         let frame = self.state.last_frame().ok_or_else(|| {
             JsValue::from_str("resolve() must be called before resolveOverlays()")
         })?;
         let layout = frame.layout();
 
-        let rects: Vec<OverlayRect> = panes_wasm::overlays(layout)
-            .map(|entry| OverlayRect {
+        self.overlay_buf.clear();
+        self.overlay_buf
+            .extend(panes_wasm::overlays(layout).map(|entry| OverlayRect {
                 base: base_rect(entry.id.raw(), entry.kind, entry.rect),
-            })
-            .collect();
+            }));
 
-        serde_json::to_string(&rects).map_err(to_js_err)
+        serde_json::to_string(&self.overlay_buf).map_err(to_js_err)
     }
 
     /// Returns a JSON snapshot of the current layout state for localStorage.
@@ -168,6 +174,34 @@ impl JsLayoutEngine {
     #[wasm_bindgen(js_name = "helpVisible")]
     pub fn help_visible(&self) -> bool {
         self.state.help_visible()
+    }
+
+    /// Returns the boundary axis as a string ("vertical" or "horizontal"), or null.
+    #[wasm_bindgen(js_name = "boundaryHover")]
+    pub fn boundary_hover(&self, viewport_x: f32, viewport_y: f32) -> JsValue {
+        match self.state.boundary_hover(viewport_x, viewport_y) {
+            Some(panes::BoundaryAxis::Vertical) => JsValue::from_str("vertical"),
+            Some(panes::BoundaryAxis::Horizontal) => JsValue::from_str("horizontal"),
+            None => JsValue::NULL,
+        }
+    }
+
+    /// Begin a drag at pointer position. Returns true if a boundary was hit.
+    #[wasm_bindgen(js_name = "dragStart")]
+    pub fn drag_start(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
+        self.state.drag_start(viewport_x, viewport_y)
+    }
+
+    /// Continue a drag to the new pointer position. Returns true if resize occurred.
+    #[wasm_bindgen(js_name = "dragMove")]
+    pub fn drag_move(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
+        self.state.drag_move(viewport_x, viewport_y)
+    }
+
+    /// End the current drag.
+    #[wasm_bindgen(js_name = "dragEnd")]
+    pub fn drag_end(&mut self) {
+        self.state.drag_end();
     }
 
     pub fn is_dynamic(&self) -> bool {

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use panes::runtime::LayoutRuntime;
-use panes::{CardSpan, Layout, LayoutTree, Overlay, PaneError, PanelSequence, fixed, grow};
+use panes::{
+    CardSpan, Layout, LayoutTree, Overlay, OverlayDef, PaneError, PanelSequence, fixed, grow,
+};
 
 /// Viewport width breakpoint tiers for the adaptive preset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,22 +29,22 @@ pub fn breakpoint_tier(width: f32) -> BreakpointTier {
 }
 
 /// Build a runtime for the adaptive preset at a given breakpoint tier.
+///
+/// Delegates to `build_preset` so layout parameters (ratios, gaps) stay
+/// in one place.
 pub fn build_adaptive(
     panels: &[Arc<str>],
     cell: f32,
     tier: BreakpointTier,
 ) -> Option<LayoutRuntime> {
-    let iter = || panels.iter().map(Arc::clone);
-    let gap = cell;
-    let rt = match tier {
-        BreakpointTier::Narrow => Layout::monocle(iter()).into_runtime(),
-        BreakpointTier::Medium => Layout::master_stack(iter())
-            .master_ratio(0.6)
-            .gap(gap)
-            .into_runtime(),
-        BreakpointTier::Wide => Layout::dwindle(iter()).ratio(0.5).gap(gap).into_runtime(),
+    let name = match tier {
+        BreakpointTier::Narrow => "monocle",
+        BreakpointTier::Medium => "master-stack",
+        BreakpointTier::Wide => "dwindle",
     };
-    rt.ok()
+    let presets = Layout::presets();
+    let info = presets.iter().find(|p| p.name == name)?;
+    crate::state::build_preset(info, panels, cell)
 }
 
 /// Content+status chrome layout: content area grows, status bar is fixed height.
@@ -81,19 +83,41 @@ pub fn build_default(panels: &[Arc<str>], gap: f32) -> Result<LayoutRuntime, Pan
     Ok(LayoutRuntime::from_tree_and_sequence(tree, sequence))
 }
 
+/// Build overlay definitions for the CSS dashboard.
+///
+/// Creates a temporary runtime to obtain `OverlayDef` values that
+/// `panes_css::emit_full` needs for overlay positioning CSS.
+pub fn build_css_overlay_defs(layout: Layout) -> Result<Box<[OverlayDef]>, PaneError> {
+    let mut rt = LayoutRuntime::from(layout);
+    rt.add_overlay(HELP_OVERLAY_KIND, help_overlay())?;
+    Ok(rt.overlays().to_vec().into_boxed_slice())
+}
+
+/// CSS showcase dashboard layout with overlay definitions.
+///
+/// Builds the dashboard layout once and derives overlay defs from it,
+/// returning both for use with `panes_css::emit_full`.
+pub fn build_css_dashboard_with_overlays() -> Result<(Layout, Box<[OverlayDef]>), PaneError> {
+    let layout = build_css_dashboard()?;
+    let overlay_defs = build_css_overlay_defs(layout)?;
+    let layout = build_css_dashboard()?;
+    Ok((layout, overlay_defs))
+}
+
 /// CSS showcase dashboard layout.
 pub fn build_css_dashboard() -> Result<Layout, PaneError> {
     Layout::dashboard([
-        ("base-colors", CardSpan::FullWidth),
-        ("semantic-colors", CardSpan::FullWidth),
-        ("surface-colors", CardSpan::FullWidth),
-        ("typography", CardSpan::FullWidth),
+        ("base-colors", CardSpan::Columns(2)),
+        ("semantic-colors", CardSpan::Columns(1)),
+        ("surface-colors", CardSpan::Columns(1)),
+        ("typography", CardSpan::Columns(2)),
         ("syntax", CardSpan::FullWidth),
-        ("editor", CardSpan::FullWidth),
+        ("editor", CardSpan::Columns(2)),
         ("diff", CardSpan::FullWidth),
         ("ansi-terminal", CardSpan::FullWidth),
     ])
     .auto_fill(380.0)
+    .auto_rows()
     .gap(20.0)
     .build()
 }

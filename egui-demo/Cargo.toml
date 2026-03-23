@@ -6,9 +6,9 @@ publish = false
 
 [dependencies]
 demo-presets = { path = "../demo-presets" }
-panes = "0.15"
-panes-egui = "0.4.5"
-palette-core = { version = "0.11", features = ["egui"] }
+panes = "0.17"
+panes-egui = "0.4.8"
+palette-core = { version = "0.12", features = ["egui"] }
 eframe = "0.33"
 rustc-hash = "2"
 
