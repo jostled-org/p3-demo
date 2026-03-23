@@ -317,7 +317,7 @@ async function main() {
   await init();
 
   state.presets = JSON.parse(layoutPresets());
-  state.engine = new JsLayoutEngine(state.presets[0].name);
+  state.engine = new JsLayoutEngine(state.presets[0].name, 1.0);
 
   state.themes = JSON.parse(themeList());
   applyTheme();
