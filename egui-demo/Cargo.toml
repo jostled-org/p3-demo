@@ -10,7 +10,6 @@ panes = "0.18"
 panes-egui = "0.4.8"
 palette-core = { version = "0.12", features = ["egui"] }
 eframe = "0.33"
-rustc-hash = "2"
 
 [lints.clippy]
 unwrap_used = "deny"

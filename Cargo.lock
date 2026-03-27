@@ -616,9 +616,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.57"
+version = "1.2.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a0dd1ca384932ff3641c8718a02769f1698e7563dc6974ffd03346116310423"
+checksum = "e1e928d4b69e3077709075a938a05ffbedfa53a84c8f766efbf8220bb1ff60e1"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -2677,21 +2677,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f6a4eed94d604b8e335a8bbf8e09499a5e4df620e97516baaed56274b3c36d"
 dependencies = [
  "egui",
- "js-sys",
  "pastey",
  "ratatui",
  "serde",
- "serde_json",
  "thiserror 2.0.18",
  "toml",
- "wasm-bindgen",
 ]
 
 [[package]]
 name = "panes"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75367f77b4519f035139e24e9ed7d1f91c25ed9a0654d5042ce1d01b15a78c83"
+checksum = "be9b4569aa0ec93155ce8d6487b5aa5525a3258e352da57011c943533c5f1bc1"
 dependencies = [
  "rustc-hash 2.1.1",
  "serde",
@@ -2725,9 +2722,9 @@ dependencies = [
 
 [[package]]
 name = "panes-egui"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d02dedf00bb40e484b0832b246c98dd82437ea5c53ff25494bfc9b912a803575"
+checksum = "c482126bf256d7edea45c609ce968e0c3d0889bed7700201835bf27221e38494"
 dependencies = [
  "egui",
  "panes",
@@ -2742,7 +2739,6 @@ dependencies = [
  "palette-core",
  "panes",
  "panes-egui",
- "rustc-hash 2.1.1",
 ]
 
 [[package]]
@@ -2772,12 +2768,10 @@ name = "panes-wasm-demo"
 version = "0.0.0"
 dependencies = [
  "demo-presets",
- "palette-core",
  "panes",
  "panes-wasm",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "wasm-bindgen",
 ]
 
