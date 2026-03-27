@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use palette_core::registry::{Registry, ThemeInfo};
 use palette_core::{Palette, PaletteError};
-use panes::diff::{LayoutDiff, OverlayDiff};
+use panes::diff::{DiffResult, LayoutDiff, OverlayDiff};
 use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
 use panes::{
     BoundaryAxis, BoundaryHit, FocusDirection, Layout, Node, PaneError, PanelId, PanelInputKind,
-    PresetInfo,
+    PresetInfo, ResolvedLayout,
 };
 
 use crate::action::Action;
@@ -114,6 +114,23 @@ fn help_overlay_height(binding_count: usize, cell: f32) -> f32 {
     (binding_count as f32 + 2.0) * cell
 }
 
+fn empty_diff<'a, T>() -> DiffResult<'a, T> {
+    DiffResult {
+        added: &[],
+        removed: &[],
+        moved: &[],
+        resized: &[],
+        unchanged: &[],
+    }
+}
+
+fn wrapping_step(current: usize, total: usize, forward: bool) -> usize {
+    match forward {
+        true => (current + 1) % total,
+        false => (current + total - 1) % total,
+    }
+}
+
 /// Pick a panel from a boundary hit, returning sign (+1/-1) for delta direction.
 fn boundary_panel_id(rt: &LayoutRuntime, hit: BoundaryHit) -> Option<(PanelId, f32)> {
     let tree = rt.tree();
@@ -136,8 +153,10 @@ struct DragState {
 pub struct DemoState {
     runtime: Option<LayoutRuntime>,
     last_frame: Option<PanesFrame>,
+    lerp_buf: Vec<Option<panes::Rect>>,
     last_viewport: (f32, f32),
     drag: Option<DragState>,
+    hover_mode: bool,
     panels: Vec<Arc<str>>,
     next_panel_id: usize,
     presets: &'static [PresetInfo],
@@ -173,8 +192,10 @@ impl DemoState {
         Ok(Self {
             runtime,
             last_frame: None,
+            lerp_buf: Vec::new(),
             last_viewport: (0.0, 0.0),
             drag: None,
+            hover_mode: true,
             panels,
             next_panel_id: DEFAULT_PANELS.len() + 1,
             presets,
@@ -224,15 +245,11 @@ impl DemoState {
     }
 
     pub fn next_preset(&mut self) {
-        let total = self.preset_count();
-        let idx = (self.preset_idx + 1) % total;
-        self.set_preset(idx);
+        self.set_preset(wrapping_step(self.preset_idx, self.preset_count(), true));
     }
 
     pub fn prev_preset(&mut self) {
-        let total = self.preset_count();
-        let idx = (self.preset_idx + total - 1) % total;
-        self.set_preset(idx);
+        self.set_preset(wrapping_step(self.preset_idx, self.preset_count(), false));
     }
 
     pub fn switch_preset(&mut self, name: &str) -> Result<(), DemoError> {
@@ -288,21 +305,23 @@ impl DemoState {
     }
 
     pub fn next_theme(&mut self) {
-        self.theme_idx = (self.theme_idx + 1) % self.themes.len();
+        self.theme_idx = wrapping_step(self.theme_idx, self.themes.len(), true);
     }
 
     pub fn prev_theme(&mut self) {
-        self.theme_idx = (self.theme_idx + self.themes.len() - 1) % self.themes.len();
+        self.theme_idx = wrapping_step(self.theme_idx, self.themes.len(), false);
     }
 
     pub fn switch_theme(&mut self, name: &str) -> Result<(), DemoError> {
-        let idx = self
-            .themes
+        self.theme_idx = self.theme_index_for_name(name)?;
+        Ok(())
+    }
+
+    fn theme_index_for_name(&self, name: &str) -> Result<usize, DemoError> {
+        self.themes
             .iter()
             .position(|t| t.name.as_ref() == name)
-            .ok_or_else(|| DemoError::UnknownTheme(Box::from(name)))?;
-        self.theme_idx = idx;
-        Ok(())
+            .ok_or_else(|| DemoError::UnknownTheme(Box::from(name)))
     }
 
     pub fn load_palette(&self, id: &str) -> Result<Palette, DemoError> {
@@ -377,39 +396,48 @@ impl DemoState {
 
     // -- Drag-to-resize --
 
-    pub fn boundary_hover(&self, x: f32, y: f32) -> Option<BoundaryAxis> {
+    fn boundary_tolerance(&self) -> f32 {
+        4.0 * self.cell
+    }
+
+    pub fn boundary_hover(&self, viewport_x: f32, viewport_y: f32) -> Option<BoundaryAxis> {
         let frame = self.last_frame.as_ref()?;
-        let tolerance = 4.0 * self.cell;
-        let hit = frame.layout().boundary_at_point(x, y, tolerance)?;
+        let hit =
+            frame
+                .layout()
+                .boundary_at_point(viewport_x, viewport_y, self.boundary_tolerance())?;
         Some(hit.axis)
     }
 
-    pub fn drag_start(&mut self, x: f32, y: f32) -> bool {
+    pub fn drag_start(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
         let Some(frame) = &self.last_frame else {
             return false;
         };
-        let tolerance = 4.0 * self.cell;
-        let Some(boundary) = frame.layout().boundary_at_point(x, y, tolerance) else {
+        let Some(boundary) =
+            frame
+                .layout()
+                .boundary_at_point(viewport_x, viewport_y, self.boundary_tolerance())
+        else {
             return false;
         };
         self.drag = Some(DragState {
             boundary,
-            last: (x, y),
+            last: (viewport_x, viewport_y),
         });
         true
     }
 
-    pub fn drag_move(&mut self, x: f32, y: f32) -> bool {
+    pub fn drag_move(&mut self, viewport_x: f32, viewport_y: f32) -> bool {
         let Some(drag) = &mut self.drag else {
             return false;
         };
         let delta = match drag.boundary.axis {
-            BoundaryAxis::Vertical => x - drag.last.0,
-            BoundaryAxis::Horizontal => y - drag.last.1,
+            BoundaryAxis::Vertical => viewport_x - drag.last.0,
+            BoundaryAxis::Horizontal => viewport_y - drag.last.1,
         };
         let axis = drag.boundary.axis;
         let boundary = drag.boundary;
-        drag.last = (x, y);
+        drag.last = (viewport_x, viewport_y);
 
         let Some(rt) = &mut self.runtime else {
             return false;
@@ -434,6 +462,16 @@ impl DemoState {
 
     pub fn drag_end(&mut self) {
         self.drag = None;
+    }
+
+    /// Signal whether the renderer needs boundary hit-testing (e.g. for cursor hover).
+    /// When `false` and no drag is active, resolve skips boundary collection.
+    pub fn set_hover_mode(&mut self, enabled: bool) {
+        self.hover_mode = enabled;
+    }
+
+    fn needs_boundaries(&self) -> bool {
+        self.hover_mode || self.is_dragging()
     }
 
     // -- Panel mutations --
@@ -476,10 +514,9 @@ impl DemoState {
         let Some(pid) = rt_ref.focused() else {
             return Ok(());
         };
-        let kind = rt_ref
+        let panel_idx = rt_ref
             .focused_kind()
-            .and_then(|k| self.panels.iter().find(|p| p.as_ref() == k))
-            .cloned();
+            .and_then(|k| self.panels.iter().position(|p| p.as_ref() == k));
         let rt = self.runtime.as_mut().ok_or(DemoError::NoRuntime)?;
         match is_default {
             true => {
@@ -490,8 +527,8 @@ impl DemoState {
                 rt.remove_panel(pid)?;
             }
         }
-        if let Some(kind) = &kind {
-            self.panels.retain(|p| !Arc::ptr_eq(p, kind));
+        if let Some(idx) = panel_idx {
+            self.panels.remove(idx);
         }
         Ok(())
     }
@@ -595,13 +632,7 @@ impl DemoState {
     pub fn last_overlay_diff(&self) -> OverlayDiff<'_> {
         match self.runtime.as_ref() {
             Some(rt) => rt.last_overlay_diff(),
-            None => OverlayDiff {
-                added: &[],
-                removed: &[],
-                moved: &[],
-                resized: &[],
-                unchanged: &[],
-            },
+            None => empty_diff(),
         }
     }
 
@@ -653,11 +684,38 @@ impl DemoState {
         if self.is_adaptive() {
             self.maybe_rebuild_adaptive(width);
         }
+        let needs_boundaries = self.needs_boundaries();
         let rt = self.runtime.as_mut().ok_or(DemoError::NoRuntime)?;
+        rt.set_collect_boundaries(needs_boundaries);
         let frame = rt.resolve(width, height)?;
         self.last_frame = Some(frame.clone());
         self.last_viewport = (width, height);
         Ok(frame)
+    }
+
+    /// Resolve with animation interpolation.
+    /// `t` ranges from 0.0 (previous layout) to 1.0 (current layout).
+    /// Falls back to a direct resolve when no previous layout exists or t >= 1.0.
+    /// Returns `(frame, lerped_layout)` where `lerped_layout` is `Some` only during
+    /// active interpolation. Renderers should use `lerped_layout` when present,
+    /// falling back to `frame.layout()`.
+    pub fn resolve_lerped(
+        &mut self,
+        width: f32,
+        height: f32,
+        t: f32,
+    ) -> Result<(PanesFrame, Option<ResolvedLayout>), DemoError> {
+        let from = self
+            .last_frame
+            .as_ref()
+            .filter(|_| t < 1.0)
+            .map(PanesFrame::arc);
+        let frame = self.resolve(width, height)?;
+        let Some(from) = from else {
+            return Ok((frame, None));
+        };
+        let lerped = from.lerp_into(frame.layout(), t, &mut self.lerp_buf);
+        Ok((frame, Some(lerped)))
     }
 
     fn maybe_rebuild_adaptive(&mut self, width: f32) {
@@ -683,13 +741,7 @@ impl DemoState {
     pub fn last_diff(&self) -> LayoutDiff<'_> {
         match self.runtime.as_ref() {
             Some(rt) => rt.last_diff(),
-            None => LayoutDiff {
-                added: &[],
-                removed: &[],
-                moved: &[],
-                resized: &[],
-                unchanged: &[],
-            },
+            None => empty_diff(),
         }
     }
 

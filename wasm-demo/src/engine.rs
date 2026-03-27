@@ -1,5 +1,5 @@
 use demo_presets::{DemoState, HELP_BINDINGS_GUI};
-use panes::{Layout, PanelInputKind};
+use panes::{Layout, PanelId, PanelInputKind, ResolvedLayout};
 use panes_wasm::WasmRect;
 use serde_json::json;
 use wasm_bindgen::prelude::*;
@@ -21,6 +21,15 @@ fn base_rect(id: u32, kind: &str, rect: WasmRect) -> BaseRect {
         w: rect.w,
         h: rect.h,
     }
+}
+
+fn fill_panels(buf: &mut Vec<PanelRect>, layout: &ResolvedLayout, focused: Option<PanelId>) {
+    buf.clear();
+    buf.extend(panes_wasm::panels(layout).map(|entry| PanelRect {
+        base: base_rect(entry.id.raw(), entry.kind, entry.rect),
+        focused: focused == Some(entry.id),
+        kind_index: entry.kind_index,
+    }));
 }
 
 #[wasm_bindgen]
@@ -46,17 +55,23 @@ impl JsLayoutEngine {
 
     pub fn resolve(&mut self, width: f32, height: f32) -> Result<String, JsValue> {
         let frame = self.state.resolve(width, height).map_err(to_js_err)?;
-        let layout = frame.layout();
-        let focused = self.state.focused_pid();
+        fill_panels(
+            &mut self.panel_buf,
+            frame.layout(),
+            self.state.focused_pid(),
+        );
+        serde_json::to_string(&self.panel_buf).map_err(to_js_err)
+    }
 
-        self.panel_buf.clear();
-        self.panel_buf
-            .extend(panes_wasm::panels(layout).map(|entry| PanelRect {
-                base: base_rect(entry.id.raw(), entry.kind, entry.rect),
-                focused: focused == Some(entry.id),
-                kind_index: entry.kind_index,
-            }));
-
+    /// Resolve with animation interpolation. Pass t=1.0 for no interpolation.
+    #[wasm_bindgen(js_name = "resolveLerped")]
+    pub fn resolve_lerped(&mut self, width: f32, height: f32, t: f32) -> Result<String, JsValue> {
+        let (frame, lerped) = self
+            .state
+            .resolve_lerped(width, height, t)
+            .map_err(to_js_err)?;
+        let layout = lerped.as_ref().unwrap_or(frame.layout());
+        fill_panels(&mut self.panel_buf, layout, self.state.focused_pid());
         serde_json::to_string(&self.panel_buf).map_err(to_js_err)
     }
 
@@ -169,8 +184,10 @@ impl JsLayoutEngine {
     }
 
     /// Returns `"vertical"`, `"horizontal"`, or null.
+    /// Enables hover mode so subsequent resolves collect boundaries.
     #[wasm_bindgen(js_name = "boundaryHover")]
-    pub fn boundary_hover(&self, viewport_x: f32, viewport_y: f32) -> JsValue {
+    pub fn boundary_hover(&mut self, viewport_x: f32, viewport_y: f32) -> JsValue {
+        self.state.set_hover_mode(true);
         match self.state.boundary_hover(viewport_x, viewport_y) {
             Some(panes::BoundaryAxis::Vertical) => JsValue::from_str("vertical"),
             Some(panes::BoundaryAxis::Horizontal) => JsValue::from_str("horizontal"),
@@ -191,6 +208,12 @@ impl JsLayoutEngine {
     #[wasm_bindgen(js_name = "dragEnd")]
     pub fn drag_end(&mut self) {
         self.state.drag_end();
+        self.state.set_hover_mode(false);
+    }
+
+    #[wasm_bindgen(js_name = "setHoverMode")]
+    pub fn set_hover_mode(&mut self, enabled: bool) {
+        self.state.set_hover_mode(enabled);
     }
 
     pub fn is_dynamic(&self) -> bool {

@@ -109,6 +109,40 @@ fn action_drag_dispatches() {
 }
 
 #[test]
+fn boundary_hover_works_after_resolve() {
+    let mut state = DemoState::new(1.0).unwrap();
+    state.switch_preset("master-stack").unwrap();
+    state.resolve(100.0, 50.0).unwrap();
+
+    let boundary_x = master_stack_boundary_x(&mut state);
+    let result = state.boundary_hover(boundary_x, 25.0);
+    assert_eq!(
+        result,
+        Some(BoundaryAxis::Vertical),
+        "boundaries should be collected by default after resolve"
+    );
+}
+
+#[test]
+fn boundary_hover_works_during_drag() {
+    let mut state = DemoState::new(1.0).unwrap();
+    state.switch_preset("master-stack").unwrap();
+    state.resolve(100.0, 50.0).unwrap();
+
+    let boundary_x = master_stack_boundary_x(&mut state);
+    assert!(state.drag_start(boundary_x, 25.0));
+
+    // Re-resolve while dragging — boundaries should still be collected
+    state.resolve(100.0, 50.0).unwrap();
+    let result = state.boundary_hover(boundary_x, 25.0);
+    assert_eq!(
+        result,
+        Some(BoundaryAxis::Vertical),
+        "boundaries should be collected during drag"
+    );
+}
+
+#[test]
 fn help_bindings_mention_drag() {
     let has_drag = |bindings: &[demo_presets::HelpBinding]| {
         bindings

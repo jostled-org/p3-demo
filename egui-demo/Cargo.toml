@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 demo-presets = { path = "../demo-presets" }
-panes = "0.17"
+panes = "0.18"
 panes-egui = "0.4.8"
 palette-core = { version = "0.12", features = ["egui"] }
 eframe = "0.33"

@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
 use demo_presets::{
-    Action, DemoError, DemoState, HELP_BINDINGS_GUI, build_help_line, chromatic_colors, ease_out,
-    format_diff_counts, load_snapshot, save_snapshot,
+    ANIM_DURATION_SECS, Action, DemoError, DemoState, HELP_BINDINGS_GUI, build_help_line,
+    chromatic_colors, ease_out, format_diff_counts, load_snapshot, save_snapshot,
 };
 use eframe::egui;
 use palette_core::Palette;
 use palette_core::egui::{to_color32, to_egui_visuals};
 use palette_core::resolved::ResolvedPalette;
 use panes::BoundaryAxis;
-use panes::{FocusDirection, PanelId};
-use rustc_hash::FxHashMap;
-
-const ANIM_DURATION_SECS: f64 = demo_presets::ANIM_DURATION_SECS as f64;
+use panes::FocusDirection;
 
 type InputSnapshot = (Vec<(egui::Key, egui::Modifiers, f64)>, f32, f64);
 
@@ -22,19 +19,6 @@ fn build_help_lines() -> Box<[Box<str>]> {
         .iter()
         .map(|b| format!("{:16}{}", b.key, b.action).into_boxed_str())
         .collect()
-}
-
-fn lerp_rect(a: egui::Rect, b: egui::Rect, t: f32) -> egui::Rect {
-    egui::Rect::from_min_max(
-        egui::pos2(
-            a.min.x + (b.min.x - a.min.x) * t,
-            a.min.y + (b.min.y - a.min.y) * t,
-        ),
-        egui::pos2(
-            a.max.x + (b.max.x - a.max.x) * t,
-            a.max.y + (b.max.y - a.max.y) * t,
-        ),
-    )
 }
 
 fn chromatic_accents(resolved: &ResolvedPalette) -> [egui::Color32; 12] {
@@ -51,9 +35,6 @@ struct DemoApp {
     palette: Palette,
     resolved: ResolvedPalette,
     accents: [egui::Color32; 12],
-    prev_rects: FxHashMap<PanelId, egui::Rect>,
-    current_rects: FxHashMap<PanelId, egui::Rect>,
-    anim_from: FxHashMap<PanelId, egui::Rect>,
     anim_start: Option<f64>,
     needs_theme_reload: bool,
     pending_overlays: Vec<OverlayRect>,
@@ -67,6 +48,7 @@ impl DemoApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Result<Self, DemoError> {
         let mut state = DemoState::new(8.0)?;
         state.set_help_binding_count(HELP_BINDINGS_GUI.len());
+        state.set_hover_mode(true);
         load_snapshot(&mut state);
         let palette = state.load_current_palette()?;
         let resolved = palette.resolve();
@@ -81,9 +63,6 @@ impl DemoApp {
             palette,
             resolved,
             accents,
-            prev_rects: FxHashMap::default(),
-            current_rects: FxHashMap::default(),
-            anim_from: FxHashMap::default(),
             anim_start: None,
             needs_theme_reload: false,
             pending_overlays: Vec::new(),
@@ -103,14 +82,13 @@ impl DemoApp {
         true
     }
 
-    fn snapshot_and_animate(&mut self, time: f64) {
-        self.anim_from = std::mem::take(&mut self.prev_rects);
+    fn start_animation(&mut self, time: f64) {
         self.anim_start = Some(time);
     }
 
     fn is_animating(&self, time: f64) -> bool {
         match self.anim_start {
-            Some(start) => (time - start) < ANIM_DURATION_SECS,
+            Some(start) => (time - start) < f64::from(ANIM_DURATION_SECS),
             None => false,
         }
     }
@@ -171,11 +149,11 @@ impl DemoApp {
         let on_boundary = hover_axis.is_some();
         match (pressed, held, released, dragging, on_boundary) {
             (true, _, _, _, true) => {
-                self.snapshot_and_animate(time);
+                self.start_animation(time);
                 self.state.apply(Action::DragStart(pos.x, pos.y));
             }
             (true, _, _, _, false) => {
-                self.snapshot_and_animate(time);
+                self.start_animation(time);
                 self.state.apply(Action::FocusAt(pos.x, pos.y));
             }
             (_, true, _, true, _) => {
@@ -193,7 +171,7 @@ impl DemoApp {
             return;
         };
         if action.changes_layout() {
-            self.snapshot_and_animate(time);
+            self.start_animation(time);
         }
         let layout_changed = self.state.apply(action);
         if !layout_changed {
@@ -250,7 +228,7 @@ fn render_preset_combo(app: &mut DemoApp, ui: &mut egui::Ui, time: f64) {
                     .selectable_label(preset.name == preset_name, preset.name)
                     .clicked()
                 {
-                    app.snapshot_and_animate(time);
+                    app.start_animation(time);
                     let _ = app.state.switch_preset(preset.name);
                 }
             }
@@ -327,19 +305,35 @@ fn render_viewport(app: &mut DemoApp, ctx: &egui::Context) {
 }
 
 fn render_panels(app: &mut DemoApp, ui: &mut egui::Ui, available: egui::Rect) {
-    let frame_result = app.state.resolve(available.width(), available.height());
-    let rt_frame = match frame_result {
-        Ok(f) => f,
-        Err(e) => {
-            ui.colored_label(egui::Color32::RED, format!("resolve error: {e}"));
-            return;
-        }
-    };
+    let time = ui.input(|i| i.time);
 
-    let layout = rt_frame.layout();
+    // Compute animation progress
+    let t = app.anim_start.map_or(1.0_f32, |start| {
+        let raw = ((time - start) as f32 / ANIM_DURATION_SECS).min(1.0);
+        match raw < 1.0 {
+            true => ease_out(raw),
+            false => {
+                app.anim_start = None;
+                1.0
+            }
+        }
+    });
+
+    let (rt_frame, lerped) =
+        match app
+            .state
+            .resolve_lerped(available.width(), available.height(), t)
+        {
+            Ok(result) => result,
+            Err(e) => {
+                ui.colored_label(egui::Color32::RED, format!("resolve error: {e}"));
+                return;
+            }
+        };
+
+    let layout = lerped.as_ref().unwrap_or(rt_frame.layout());
     let focused_pid = app.state.focused_pid();
     let painter = ui.painter();
-    let time = ui.input(|i| i.time);
 
     let bg_color = to_color32(&app.resolved.base.background);
     let fg_color = to_color32(&app.resolved.base.foreground);
@@ -348,14 +342,10 @@ fn render_panels(app: &mut DemoApp, ui: &mut egui::Ui, available: egui::Rect) {
     let focus_border = to_color32(&app.resolved.surface.focus);
     let comment_color = to_color32(&app.resolved.typography.comment);
 
-    app.current_rects.clear();
-
     for entry in panes_egui::panels(layout) {
-        let rect = entry.rect.translate(available.min.to_vec2());
-        app.current_rects.insert(entry.id, rect);
+        let display_rect = entry.rect.translate(available.min.to_vec2());
         let is_focused = focused_pid == Some(entry.id);
 
-        let display_rect = anim_rect(app, entry.id, rect, time);
         let panel_bg = match is_focused {
             true => hi_bg,
             false => bg_color,
@@ -387,8 +377,6 @@ fn render_panels(app: &mut DemoApp, ui: &mut egui::Ui, available: egui::Rect) {
         );
     }
 
-    std::mem::swap(&mut app.prev_rects, &mut app.current_rects);
-
     // Stash overlay rects from panes for rendering as egui::Area after CentralPanel
     app.pending_overlays.clear();
     for overlay in panes_egui::overlays_at(layout, available.min) {
@@ -399,14 +387,6 @@ fn render_panels(app: &mut DemoApp, ui: &mut egui::Ui, available: egui::Rect) {
     }
 
     paint_diff_overlay(app, painter, available, comment_color);
-}
-
-fn anim_rect(app: &DemoApp, id: PanelId, target: egui::Rect, time: f64) -> egui::Rect {
-    let (Some(start), Some(from)) = (app.anim_start, app.anim_from.get(&id)) else {
-        return target;
-    };
-    let t = ((time - start) as f32 / ANIM_DURATION_SECS as f32).min(1.0);
-    lerp_rect(*from, target, ease_out(t))
 }
 
 fn paint_label(
@@ -516,15 +496,6 @@ impl eframe::App for DemoApp {
         render_status(self, ctx);
         render_viewport(self, ctx);
         render_overlays(self, ctx);
-
-        // Clear animation after duration
-        match self.anim_start {
-            Some(start) if (time - start) >= ANIM_DURATION_SECS => {
-                self.anim_start = None;
-                self.anim_from.clear();
-            }
-            _ => {}
-        }
 
         if self.is_animating(time) {
             ctx.request_repaint();

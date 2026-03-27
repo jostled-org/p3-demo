@@ -12,12 +12,12 @@ use demo_presets::{
     format_diff_counts, load_snapshot, save_snapshot, status_data,
 };
 use palette_core::terminal::{ResolvedTerminalTheme, style, to_resolved_terminal_theme};
-use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
+use panes::runtime::LayoutRuntime;
 use panes::{FocusDirection, OverlayEntry, ResolvedLayout};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 
@@ -37,23 +37,13 @@ enum Error {
     Io(#[from] io::Error),
 }
 
-// -- Animation state --
-// Smooth transitions via lerp between layout snapshots.
-
-struct Animation {
-    from: PanesFrame,
-    start: Instant,
-    buf: Vec<Option<panes::Rect>>,
-}
-
 // -- App state --
 
 struct App {
     state: DemoState,
     chrome: Option<LayoutRuntime>,
     theme: ResolvedTerminalTheme,
-    animation: Option<Animation>,
-    last_frame: Option<PanesFrame>,
+    anim_start: Option<Instant>,
     last_area: (f32, f32),
     running: bool,
     /// Cached status-bar help line (static content, built once)
@@ -76,8 +66,7 @@ impl App {
             state,
             chrome,
             theme,
-            animation: None,
-            last_frame: None,
+            anim_start: None,
             last_area: (0.0, 0.0),
             running: true,
             cached_help_line,
@@ -86,18 +75,11 @@ impl App {
     }
 
     fn is_animating(&self) -> bool {
-        self.animation.is_some()
+        self.anim_start.is_some()
     }
 
-    // Snapshot the current layout before a mutation so we can animate from it
-    fn snapshot_for_animation(&mut self) {
-        if let Some(ref frame) = self.last_frame {
-            self.animation = Some(Animation {
-                from: frame.clone(),
-                start: Instant::now(),
-                buf: Vec::new(),
-            });
-        }
+    fn start_animation(&mut self) {
+        self.anim_start = Some(Instant::now());
     }
 
     fn reload_theme(&mut self) -> bool {
@@ -170,10 +152,10 @@ fn render_panels(
         let comment = theme.typography.comment;
         let dims = format!("{}×{}", r.width, r.height);
         let pos = format!("({},{})", r.x, r.y);
-        let lines = vec![
+        let lines = Text::from_iter([
             Line::from(Span::styled(dims, Style::default().fg(comment))),
             Line::from(Span::styled(pos, Style::default().fg(comment))),
-        ];
+        ]);
 
         frame.render_widget(Paragraph::new(lines).style(style(fg, panel_bg)), inner);
     }
@@ -223,8 +205,20 @@ fn render_layout(frame: &mut Frame, app: &mut App, area: Rect) {
     let w = f32::from(area.width);
     let h = f32::from(area.height);
 
-    let rt_frame = match app.state.resolve(w, h) {
-        Ok(f) => f,
+    // Compute animation progress, clearing animation when complete
+    let t = app.anim_start.map_or(1.0, |start| {
+        let raw = (start.elapsed().as_secs_f32() / ANIM_DURATION.as_secs_f32()).min(1.0);
+        match raw < 1.0 {
+            true => ease_out(raw),
+            false => {
+                app.anim_start = None;
+                1.0
+            }
+        }
+    });
+
+    let (rt_frame, lerped) = match app.state.resolve_lerped(w, h, t) {
+        Ok(result) => result,
         Err(e) => {
             let msg = format!("resolve error: {e}");
             frame.render_widget(Paragraph::new(msg).style(error_style), area);
@@ -232,22 +226,7 @@ fn render_layout(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     };
 
-    let target = rt_frame.layout();
-
-    // Lerp between old and new layout during animation
-    let display = app.animation.as_mut().and_then(|anim| {
-        let t = (anim.start.elapsed().as_secs_f32() / ANIM_DURATION.as_secs_f32()).min(1.0);
-        let lerped = anim
-            .from
-            .layout()
-            .lerp_into(target, ease_out(t), &mut anim.buf);
-        (t < 1.0).then_some(lerped)
-    });
-    if display.is_none() {
-        app.animation = None;
-    }
-
-    let resolved = display.as_ref().unwrap_or(target);
+    let resolved = lerped.as_ref().unwrap_or(rt_frame.layout());
     app.last_area = (w, h);
 
     render_panels(frame, resolved, area, &app.theme, app.state.focused_pid());
@@ -276,9 +255,6 @@ fn render_layout(frame: &mut Frame, app: &mut App, area: Rect) {
         )),
         diff_area,
     );
-
-    // Store frame for next animation snapshot (moved after all borrows of target end)
-    app.last_frame = Some(rt_frame);
 }
 
 fn render(frame: &mut Frame, app: &mut App) {
@@ -418,7 +394,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
     };
     // Snapshot before mutation so animation lerps from old to new layout
     if action.changes_layout() {
-        app.snapshot_for_animation();
+        app.start_animation();
     }
     let layout_changed = app.state.apply(action);
     // Theme cycling needs a palette reload
@@ -444,7 +420,7 @@ fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
         _ => return,
     };
     if action.changes_layout() {
-        app.snapshot_for_animation();
+        app.start_animation();
     }
     app.state.apply(action);
 }

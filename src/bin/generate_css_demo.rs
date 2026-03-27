@@ -871,13 +871,14 @@ fn ansi_card() -> String {
     let colors = [
         "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
     ];
+    let mut fg_buf = String::new();
     let rows: &[(&str, &str)] = &[("", ""), ("bright-", "br-")];
     for (prefix, label_prefix) in rows {
         for c in &colors {
             let bg = format!("--ansi-{prefix}{c}");
-            let fg = format!("--text-on-ansi-{prefix}{c}");
+            write_text_on_var(&mut fg_buf, &bg);
             let label = format!("{label_prefix}{c}");
-            write_swatch(&mut html, "ansi-cell", &bg, &fg, &label);
+            write_swatch(&mut html, "ansi-cell", &bg, &fg_buf, &label);
         }
     }
 

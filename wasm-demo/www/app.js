@@ -21,8 +21,6 @@ const state = {
   themeIdx: 0,
   presets: [],
   presetIdx: 0,
-  prevRects: null,
-  targetRects: null,
   animStart: null,
   animFrame: null,
   dragging: false,
@@ -42,17 +40,6 @@ const stDiff = document.getElementById('st-diff');
 const themeCssEl = document.getElementById('theme-css');
 const overlayContainer = document.getElementById('overlay-container');
 
-// -- Easing --
-
-function easeOutCubic(t) {
-  const inv = 1 - t;
-  return 1 - inv * inv * inv;
-}
-
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
 // -- Theme --
 
 function applyTheme() {
@@ -62,14 +49,14 @@ function applyTheme() {
 
 // -- Rendering --
 
-function resolveLayout() {
+function resolveLayout(t = 1.0) {
   const rect = viewport.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return null;
-  const json = state.engine.resolve(rect.width, rect.height);
+  const json = state.engine.resolveLerped(rect.width, rect.height, t);
   return JSON.parse(json);
 }
 
-function syncPanels(panels, progress) {
+function syncPanels(panels) {
   const activeIds = new Set(panels.map(p => String(p.id)));
 
   // Remove stale panels (skip overlay container)
@@ -81,7 +68,7 @@ function syncPanels(panels, progress) {
   }
 
   // Upsert panels
-  panels.forEach((p, i) => {
+  for (const p of panels) {
     const key = String(p.id);
     let el = viewport.querySelector(`[data-panel-id="${key}"]`);
     if (!el) {
@@ -92,23 +79,10 @@ function syncPanels(panels, progress) {
       viewport.appendChild(el);
     }
 
-    // Interpolate position during animation (keyed by panel ID)
-    let x = p.x, y = p.y, w = p.w, h = p.h;
-    if (progress !== null && state.prevRects) {
-      const prev = state.prevRects.get(key);
-      if (prev) {
-        const t = easeOutCubic(progress);
-        x = lerp(prev.x, p.x, t);
-        y = lerp(prev.y, p.y, t);
-        w = lerp(prev.w, p.w, t);
-        h = lerp(prev.h, p.h, t);
-      }
-    }
-
-    el.style.left = `${x}px`;
-    el.style.top = `${y}px`;
-    el.style.width = `${w}px`;
-    el.style.height = `${h}px`;
+    el.style.left = `${p.x}px`;
+    el.style.top = `${p.y}px`;
+    el.style.width = `${p.w}px`;
+    el.style.height = `${p.h}px`;
 
     el.classList.toggle('focused', p.focused);
 
@@ -119,8 +93,8 @@ function syncPanels(panels, progress) {
     title.style.background = p.focused ? 'var(--bg-hi, rgba(255,255,255,0.05))' : 'transparent';
 
     const body = el.lastElementChild;
-    body.textContent = `${Math.round(w)}\u00d7${Math.round(h)}  (${Math.round(x)},${Math.round(y)})`;
-  });
+    body.textContent = `${Math.round(p.w)}\u00d7${Math.round(p.h)}  (${Math.round(p.x)},${Math.round(p.y)})`;
+  }
 }
 
 function updateStatus() {
@@ -183,23 +157,21 @@ function renderOverlays() {
 }
 
 function renderFrame(timestamp) {
-  let progress = null;
+  let t = 1.0;
   if (state.animStart !== null) {
     const elapsed = timestamp - state.animStart;
-    progress = Math.min(elapsed / ANIM_MS, 1);
-    if (progress >= 1) {
+    t = Math.min(elapsed / ANIM_MS, 1);
+    if (t >= 1) {
       state.animStart = null;
-      state.prevRects = null;
-      state.targetRects = null;
       state.animFrame = null;
-      progress = null;
+      t = 1.0;
     }
   }
 
-  const panels = state.targetRects ?? resolveLayout();
+  const panels = resolveLayout(t);
   if (!panels) return;
 
-  syncPanels(panels, progress);
+  syncPanels(panels);
   renderOverlays();
   updateStatus();
 
@@ -215,20 +187,8 @@ function render() {
 
 // -- Animation helpers --
 
-function snapshotRects() {
-  const panels = resolveLayout();
-  if (!panels) return null;
-  const map = new Map();
-  for (const p of panels) {
-    map.set(String(p.id), { x: p.x, y: p.y, w: p.w, h: p.h });
-  }
-  return map;
-}
-
 function animatedAction(fn) {
-  state.prevRects = snapshotRects();
   fn();
-  state.targetRects = resolveLayout();
   state.animStart = performance.now();
   render();
 }
@@ -483,7 +443,6 @@ async function main() {
   window.addEventListener('beforeunload', saveState);
 
   new ResizeObserver(() => {
-    state.targetRects = null;
     render();
   }).observe(viewport);
 
