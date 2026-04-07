@@ -9,7 +9,7 @@ panes = { version = "0.18", features = ["serde"] }
 palette-core = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-taffy = "0.9"
+taffy = "0.10"
 thiserror = "2"
 
 [dev-dependencies]

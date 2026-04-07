@@ -6,12 +6,106 @@ use demo_presets::{
 };
 use eframe::egui;
 use palette_core::Palette;
-use palette_core::egui::{to_color32, to_egui_visuals};
+use palette_core::color::Color;
 use palette_core::resolved::ResolvedPalette;
 use panes::BoundaryAxis;
 use panes::FocusDirection;
 
 type InputSnapshot = (Vec<(egui::Key, egui::Modifiers, f64)>, f32, f64);
+
+/// Convert a palette [`Color`] to an egui [`Color32`](egui::Color32).
+fn to_color32(color: &Color) -> egui::Color32 {
+    egui::Color32::from_rgb(color.r, color.g, color.b)
+}
+
+macro_rules! apply_color {
+    ($field:expr => $($target:expr),+) => {
+        match $field {
+            Some(c) => {
+                let color = to_color32(c);
+                $($target = color;)+
+            }
+            None => {}
+        }
+    };
+    ($field:expr => Some $($target:expr),+) => {
+        match $field {
+            Some(c) => {
+                let color = to_color32(c);
+                $($target = Some(color);)+
+            }
+            None => {}
+        }
+    };
+}
+
+macro_rules! apply_stroke {
+    ($field:expr, $width:expr => $($target:expr),+) => {
+        match $field {
+            Some(c) => {
+                let stroke = egui::Stroke::new($width, to_color32(c));
+                $($target = stroke;)+
+            }
+            None => {}
+        }
+    };
+}
+
+/// Build egui [`Visuals`](egui::Visuals) from a palette.
+///
+/// Starts from dark defaults and overrides panels, text, widgets,
+/// selections, and diagnostics from populated slots.
+fn to_egui_visuals(palette: &Palette) -> egui::Visuals {
+    let mut v = egui::Visuals::dark();
+
+    // Background fills
+    apply_color!(&palette.base.background =>
+        v.panel_fill, v.window_fill, v.faint_bg_color, v.extreme_bg_color);
+    apply_color!(&palette.base.background_dark =>
+        v.extreme_bg_color, v.code_bg_color);
+
+    // Text colors
+    apply_color!(&palette.base.foreground => Some v.override_text_color);
+    apply_color!(&palette.base.foreground_dark => Some v.weak_text_color);
+
+    // Semantic colors
+    apply_color!(&palette.semantic.error => v.error_fg_color);
+    apply_color!(&palette.semantic.warning => v.warn_fg_color);
+
+    // Window stroke
+    apply_stroke!(&palette.base.border, 1.0 =>
+        v.window_stroke,
+        v.widgets.noninteractive.bg_stroke);
+    apply_stroke!(&palette.base.border_highlight, 1.0 =>
+        v.widgets.hovered.bg_stroke,
+        v.widgets.active.bg_stroke);
+
+    // Widget backgrounds
+    apply_color!(&palette.surface.highlight =>
+        v.widgets.hovered.bg_fill, v.widgets.active.bg_fill);
+    apply_color!(&palette.surface.overlay =>
+        v.widgets.noninteractive.bg_fill);
+    apply_color!(&palette.surface.menu =>
+        v.widgets.open.bg_fill);
+
+    // Widget foreground strokes
+    apply_stroke!(&palette.base.foreground, 1.0 =>
+        v.widgets.noninteractive.fg_stroke);
+    apply_stroke!(&palette.base.foreground_dark, 1.0 =>
+        v.widgets.inactive.fg_stroke);
+
+    // Selection
+    apply_color!(&palette.surface.selection => v.selection.bg_fill);
+    apply_stroke!(&palette.editor.selection_fg, 1.0 => v.selection.stroke);
+
+    // Text cursor
+    apply_stroke!(&palette.editor.cursor, 2.0 => v.text_cursor.stroke);
+
+    // Typography
+    apply_color!(&palette.typography.link => v.hyperlink_color);
+
+    v
+}
 
 /// Pre-format help binding strings (called once at startup).
 fn build_help_lines() -> Box<[Box<str>]> {
@@ -207,12 +301,12 @@ fn egui_key_to_action(key: egui::Key, shift: bool) -> Option<Action> {
     }
 }
 
-fn render_header(app: &mut DemoApp, ctx: &egui::Context, time: f64) {
-    egui::TopBottomPanel::top("header").show(ctx, |ui| {
+fn render_header(app: &mut DemoApp, ui: &mut egui::Ui, time: f64) {
+    egui::Panel::top("header").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             render_preset_combo(app, ui, time);
             ui.separator();
-            render_theme_combo(app, ui, ctx);
+            render_theme_combo(app, ui);
         });
     });
 }
@@ -235,7 +329,7 @@ fn render_preset_combo(app: &mut DemoApp, ui: &mut egui::Ui, time: f64) {
         });
 }
 
-fn render_theme_combo(app: &mut DemoApp, ui: &mut egui::Ui, ctx: &egui::Context) {
+fn render_theme_combo(app: &mut DemoApp, ui: &mut egui::Ui) {
     ui.label("Theme:");
     // Clone Arc<str> (cheap ref-count bump) so we can mutate app inside the closure
     let Some(current_info) = app.state.current_theme() else {
@@ -249,6 +343,7 @@ fn render_theme_combo(app: &mut DemoApp, ui: &mut egui::Ui, ctx: &egui::Context)
         .iter()
         .map(|t| Arc::clone(&t.name))
         .collect();
+    let ctx = ui.ctx().clone();
     egui::ComboBox::from_id_salt("theme")
         .selected_text(&*current_name)
         .show_ui(ui, |ui| {
@@ -258,14 +353,14 @@ fn render_theme_combo(app: &mut DemoApp, ui: &mut egui::Ui, ctx: &egui::Context)
                     .clicked()
                 {
                     let _ = app.state.switch_theme(name);
-                    app.reload_theme(ctx);
+                    app.reload_theme(&ctx);
                 }
             }
         });
 }
 
-fn render_status(app: &DemoApp, ctx: &egui::Context) {
-    egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+fn render_status(app: &DemoApp, ui: &mut egui::Ui) {
+    egui::Panel::bottom("status").show_inside(ui, |ui| {
         render_status_lines(app, ui);
     });
 }
@@ -297,8 +392,8 @@ fn render_status_lines(app: &DemoApp, ui: &mut egui::Ui) {
     });
 }
 
-fn render_viewport(app: &mut DemoApp, ctx: &egui::Context) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+fn render_viewport(app: &mut DemoApp, ui: &mut egui::Ui) {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         let available = ui.available_rect_before_wrap();
         render_panels(app, ui, available);
     });
@@ -478,24 +573,25 @@ fn paint_diff_overlay(
 }
 
 impl eframe::App for DemoApp {
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         save_snapshot(&self.state);
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.handle_input(ctx);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.handle_input(&ctx);
 
         if self.needs_theme_reload {
             self.needs_theme_reload = false;
-            self.reload_theme(ctx);
+            self.reload_theme(&ctx);
         }
 
         let time = ctx.input(|i| i.time);
 
-        render_header(self, ctx, time);
-        render_status(self, ctx);
-        render_viewport(self, ctx);
-        render_overlays(self, ctx);
+        render_header(self, ui, time);
+        render_status(self, ui);
+        render_viewport(self, ui);
+        render_overlays(self, &ctx);
 
         if self.is_animating(time) {
             ctx.request_repaint();
