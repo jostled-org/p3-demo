@@ -545,6 +545,30 @@ body {
   opacity: 0.9;
   transform: translateY(0);
 }
+.gradient-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+.gradient-swatch {
+  min-height: 120px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25);
+  display: flex;
+  align-items: flex-end;
+  padding: 0.75rem;
+}
+.gradient-swatch span {
+  display: inline-block;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-dark) 72%, transparent);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  font-size: 0.8rem;
+  line-height: 1;
+  white-space: nowrap;
+}
 
 /* Code block */
 pre.code {
@@ -791,7 +815,7 @@ fn swatch_card(title: &str, pane_name: &str, swatches: &[(&str, &str)]) -> Strin
 
 fn gradient_card(gradient_names: &[Box<str>]) -> String {
     let mut html = String::from(
-        "        <section class=\"card\" data-pane=\"gradients\">\n          <h2>Gradients</h2>\n          <div class=\"swatches\">\n",
+        "        <section class=\"card\" data-pane=\"gradients\">\n          <h2>Gradients</h2>\n          <div class=\"gradient-swatches\">\n",
     );
     match gradient_names.is_empty() {
         true => html.push_str(
@@ -800,7 +824,11 @@ fn gradient_card(gradient_names: &[Box<str>]) -> String {
         false => {
             for name in gradient_names {
                 let var = format!("--gradient-{name}");
-                write_swatch(&mut html, "swatch", &var, "--fg", name);
+                let label = name.strip_prefix("demo-").unwrap_or(name);
+                let _ = writeln!(
+                    html,
+                    "            <div class=\"gradient-swatch\" style=\"background: var({var}); color: var(--fg);\"><span>{label}</span></div>"
+                );
             }
         }
     }
