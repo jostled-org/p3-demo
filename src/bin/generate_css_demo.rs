@@ -681,11 +681,10 @@ fn body_content(theme_options: &str, gradient_names: &[Box<str>]) -> String {
     <button class="help-btn" id="help-toggle" aria-label="Toggle help">?</button>
   </header>
   <main data-pane-root>
-    <div data-pane-node="1">
 "#
     );
 
-    // Cards wrapped in their pane-node containers (nodes 2-10, depth-first)
+    // Cards wrapped in their pane-node containers (nodes 1-9, depth-first)
     let cards: Vec<String> = vec![
         swatch_card(
             "Base Colors",
@@ -747,14 +746,14 @@ fn body_content(theme_options: &str, gradient_names: &[Box<str>]) -> String {
     ];
 
     for (i, card) in cards.iter().enumerate() {
-        let node_id = i + 2; // nodes 2 through 10
+        let node_id = i + 1; // nodes 1 through 9
         let _ = write!(
             html,
             "      <div data-pane-node=\"{node_id}\">\n{card}      </div>\n"
         );
     }
 
-    html.push_str("    </div>\n  </main>\n");
+    html.push_str("  </main>\n");
 
     // Help overlay
     let _ = write!(
