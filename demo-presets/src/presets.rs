@@ -2,7 +2,20 @@ use std::sync::Arc;
 
 use panes::runtime::LayoutRuntime;
 use panes::{
-    CardSpan, Layout, LayoutTree, Overlay, OverlayDef, PaneError, PanelSequence, fixed, grow,
+    CardSpan, Grid, Layout, LayoutTree, Overlay, OverlayDef, PaneError, PanelSequence, fixed, grow,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DemoPresetInfo {
+    pub name: &'static str,
+    pub input: panes::PanelInputKind,
+    pub description: &'static str,
+}
+
+pub const GRID_PRESET: DemoPresetInfo = DemoPresetInfo {
+    name: "grid",
+    input: panes::PanelInputKind::DynamicList,
+    description: "Explicit grid container with mixed spans and nested rows/columns",
 };
 
 /// Viewport width breakpoint tiers for the adaptive preset.
@@ -40,7 +53,24 @@ pub fn build_adaptive(
     };
     let presets = Layout::presets();
     let info = presets.iter().find(|p| p.name == name)?;
-    crate::state::build_preset(info, panels, cell)
+    let info = DemoPresetInfo {
+        name: info.name,
+        input: info.input,
+        description: info.description,
+    };
+    crate::state::build_preset(&info, panels, cell)
+}
+
+pub fn demo_presets() -> Box<[DemoPresetInfo]> {
+    Layout::presets()
+        .iter()
+        .map(|preset| DemoPresetInfo {
+            name: preset.name,
+            input: preset.input,
+            description: preset.description,
+        })
+        .chain(std::iter::once(GRID_PRESET))
+        .collect()
 }
 
 /// Content area + fixed-height status bar.
@@ -74,6 +104,30 @@ pub fn build_default(panels: &[Arc<str>], gap: f32) -> Result<LayoutRuntime, Pan
     Ok(LayoutRuntime::from_tree_and_sequence(tree, sequence))
 }
 
+pub fn build_grid_showcase(panels: &[Arc<str>], gap: f32) -> Result<LayoutRuntime, PaneError> {
+    let mut iter = panels.iter().cloned();
+    let primary = iter.next().unwrap_or_else(|| Arc::from("editor"));
+    let secondary = iter.next().unwrap_or_else(|| Arc::from("terminal"));
+    let tertiary = iter.next().unwrap_or_else(|| Arc::from("logs"));
+    let quaternary = iter.next().unwrap_or_else(|| Arc::from("inspector"));
+    let extra: Vec<Arc<str>> = iter.collect();
+
+    let layout = Layout::build_grid(Grid::columns(4).gap(gap).auto_rows(), |grid| {
+        grid.panel_span(primary, CardSpan::Columns(2));
+        grid.col_gap(gap, |col| {
+            col.panel(secondary);
+            col.panel(quaternary);
+        });
+        grid.row_gap(gap, |row| {
+            row.panel(tertiary);
+            for panel in &extra {
+                row.panel(Arc::clone(panel));
+            }
+        });
+    })?;
+    Ok(LayoutRuntime::new(layout.into()))
+}
+
 /// Build overlay definitions for the CSS dashboard.
 pub fn build_css_overlay_defs(layout: Layout) -> Result<Box<[OverlayDef]>, PaneError> {
     let mut rt = LayoutRuntime::from(layout);
@@ -93,6 +147,7 @@ pub fn build_css_dashboard() -> Result<Layout, PaneError> {
         ("base-colors", CardSpan::Columns(2)),
         ("semantic-colors", CardSpan::Columns(1)),
         ("surface-colors", CardSpan::Columns(1)),
+        ("gradients", CardSpan::Columns(2)),
         ("typography", CardSpan::Columns(2)),
         ("syntax", CardSpan::FullWidth),
         ("editor", CardSpan::Columns(2)),

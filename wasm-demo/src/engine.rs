@@ -1,5 +1,5 @@
 use demo_presets::{DemoState, HELP_BINDINGS_GUI};
-use panes::{Layout, PanelId, PanelInputKind, ResolvedLayout};
+use panes::{PanelId, PanelInputKind, ResolvedLayout};
 use panes_wasm::WasmRect;
 use serde_json::json;
 use wasm_bindgen::prelude::*;
@@ -267,7 +267,7 @@ pub fn help_bindings() -> Result<String, JsValue> {
 
 #[wasm_bindgen(js_name = "layoutPresets")]
 pub fn layout_presets() -> Result<String, JsValue> {
-    let presets: Vec<PresetDesc> = Layout::presets()
+    let presets: Vec<PresetDesc> = demo_presets::demo_presets()
         .iter()
         .map(|p| PresetDesc {
             name: p.name,

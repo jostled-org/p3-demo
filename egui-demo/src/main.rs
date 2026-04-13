@@ -314,16 +314,22 @@ fn render_header(app: &mut DemoApp, ui: &mut egui::Ui, time: f64) {
 fn render_preset_combo(app: &mut DemoApp, ui: &mut egui::Ui, time: f64) {
     ui.label("Preset:");
     let preset_name = app.state.preset_name().to_string();
+    let preset_names: Vec<&'static str> = app
+        .state
+        .presets()
+        .iter()
+        .map(|preset| preset.name)
+        .collect();
     let _response = egui::ComboBox::from_id_salt("preset")
         .selected_text(&preset_name)
         .show_ui(ui, |ui| {
-            for preset in app.state.presets() {
+            for preset in &preset_names {
                 if ui
-                    .selectable_label(preset.name == preset_name, preset.name)
+                    .selectable_label(*preset == preset_name, *preset)
                     .clicked()
                 {
                     app.start_animation(time);
-                    let _ = app.state.switch_preset(preset.name);
+                    let _ = app.state.switch_preset(preset);
                 }
             }
         });

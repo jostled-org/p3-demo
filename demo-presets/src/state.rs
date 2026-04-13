@@ -6,13 +6,13 @@ use panes::diff::{DiffResult, LayoutDiff, OverlayDiff};
 use panes::runtime::{Frame as PanesFrame, LayoutRuntime};
 use panes::{
     BoundaryAxis, BoundaryHit, FocusDirection, Layout, Node, PaneError, PanelId, PanelInputKind,
-    PresetInfo, ResolvedLayout,
+    ResolvedLayout,
 };
 
 use crate::action::Action;
 use crate::help;
 use crate::presets;
-use crate::presets::BreakpointTier;
+use crate::presets::{BreakpointTier, DemoPresetInfo};
 use crate::resize;
 use crate::snapshot::DemoSnapshot;
 
@@ -41,7 +41,11 @@ pub enum DemoError {
 }
 
 /// Build a `LayoutRuntime` for a named preset. `cell` scales absolute values to renderer units.
-pub fn build_preset(info: &PresetInfo, panels: &[Arc<str>], cell: f32) -> Option<LayoutRuntime> {
+pub fn build_preset(
+    info: &DemoPresetInfo,
+    panels: &[Arc<str>],
+    cell: f32,
+) -> Option<LayoutRuntime> {
     let iter = || panels.iter().map(Arc::clone);
     let cards = || -> Vec<(Arc<str>, usize)> { iter().map(|p| (p, 1)).collect() };
     let gap = cell;
@@ -58,7 +62,7 @@ pub fn build_preset(info: &PresetInfo, panels: &[Arc<str>], cell: f32) -> Option
         "scrollable" => Layout::scrollable(iter()).gap(gap).into_runtime(),
         "dwindle" => Layout::dwindle(iter()).ratio(0.5).gap(gap).into_runtime(),
         "spiral" => Layout::spiral(iter()).ratio(0.5).gap(gap).into_runtime(),
-        "columns" | "grid" => Layout::dashboard(cards())
+        "columns" => Layout::dashboard(cards())
             .columns(3)
             .gap(gap)
             .into_runtime(),
@@ -72,6 +76,7 @@ pub fn build_preset(info: &PresetInfo, panels: &[Arc<str>], cell: f32) -> Option
             .auto_fill(30.0 * cell)
             .gap(gap)
             .into_runtime(),
+        "grid" => return presets::build_grid_showcase(panels, gap).ok(),
         "split" => {
             let first = panels.first().map(Arc::clone)?;
             let second = panels.get(1).map_or_else(|| Arc::from("empty"), Arc::clone);
@@ -124,6 +129,17 @@ fn empty_diff<'a, T>() -> DiffResult<'a, T> {
     }
 }
 
+fn empty_overlay_diff<'a>() -> OverlayDiff<'a> {
+    OverlayDiff {
+        added: &[],
+        removed: &[],
+        moved: &[],
+        resized: &[],
+        unchanged: &[],
+        anchor_failed: &[],
+    }
+}
+
 fn wrapping_step(current: usize, total: usize, forward: bool) -> usize {
     match forward {
         true => (current + 1) % total,
@@ -159,7 +175,7 @@ pub struct DemoState {
     hover_mode: bool,
     panels: Vec<Arc<str>>,
     next_panel_id: usize,
-    presets: &'static [PresetInfo],
+    presets: Box<[DemoPresetInfo]>,
     preset_idx: usize,
     adaptive_tier: Option<BreakpointTier>,
     registry: Registry,
@@ -179,7 +195,7 @@ impl DemoState {
             return Err(DemoError::NoThemes);
         }
 
-        let presets = Layout::presets();
+        let presets = presets::demo_presets();
         if presets.is_empty() {
             return Err(DemoError::NoPresets);
         }
@@ -212,11 +228,11 @@ impl DemoState {
 
     // -- Preset navigation --
 
-    pub fn presets(&self) -> &'static [PresetInfo] {
-        self.presets
+    pub fn presets(&self) -> &[DemoPresetInfo] {
+        &self.presets
     }
 
-    pub fn current_preset(&self) -> Option<&PresetInfo> {
+    pub fn current_preset(&self) -> Option<&DemoPresetInfo> {
         self.presets.get(self.preset_idx)
     }
 
@@ -353,8 +369,9 @@ impl DemoState {
 
     pub fn focus_direction(&mut self, dir: FocusDirection) {
         let Some(rt) = &mut self.runtime else { return };
-        let spatial_ok = rt.focus_direction_current(dir).is_ok();
-        if spatial_ok {
+        let spatial = rt.focus_direction_current(dir);
+        let keep_spatial = matches!(spatial, Ok((Some(_), outcome)) if outcome.is_on_target());
+        if keep_spatial {
             return;
         }
         match dir {
@@ -391,7 +408,7 @@ impl DemoState {
         let Some(pid) = frame.layout().panel_at_point(viewport_x, viewport_y) else {
             return false;
         };
-        rt.focus(pid)
+        rt.focus(pid).is_on_target()
     }
 
     // -- Drag-to-resize --
@@ -535,13 +552,13 @@ impl DemoState {
 
     pub fn swap_next(&mut self) {
         if let Some(rt) = &mut self.runtime {
-            rt.swap_next();
+            let _ = rt.swap_next();
         }
     }
 
     pub fn swap_prev(&mut self) {
         if let Some(rt) = &mut self.runtime {
-            rt.swap_prev();
+            let _ = rt.swap_prev();
         }
     }
 
@@ -632,7 +649,7 @@ impl DemoState {
     pub fn last_overlay_diff(&self) -> OverlayDiff<'_> {
         match self.runtime.as_ref() {
             Some(rt) => rt.last_overlay_diff(),
-            None => empty_diff(),
+            None => empty_overlay_diff(),
         }
     }
 

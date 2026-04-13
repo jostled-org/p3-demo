@@ -1,6 +1,6 @@
 use demo_presets::{
     Action, DemoState, build_chrome, build_css_dashboard, build_css_dashboard_with_overlays,
-    build_default,
+    build_default, demo_presets,
 };
 use panes_css;
 
@@ -137,4 +137,17 @@ fn help_overlay_survives_preset_switch() {
     let overlays: Vec<_> = frame.layout().overlays().collect();
     assert_eq!(overlays.len(), 1);
     assert_eq!(overlays[0].kind, "help");
+}
+
+#[test]
+fn demo_preset_catalog_includes_grid_showcase() {
+    assert!(demo_presets().iter().any(|preset| preset.name == "grid"));
+}
+
+#[test]
+fn grid_showcase_preset_resolves() {
+    let mut state = DemoState::new(1.0).unwrap();
+    state.switch_preset("grid").unwrap();
+    let frame = state.resolve(120.0, 80.0).unwrap();
+    assert!(frame.layout().panels().count() >= 3);
 }

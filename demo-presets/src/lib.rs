@@ -17,8 +17,9 @@ pub use diff_fmt::format_diff_counts;
 pub use help::{HELP_BINDINGS_GUI, HELP_BINDINGS_TUI, HelpBinding, build_help_line};
 pub use persist::{load_snapshot, save_snapshot};
 pub use presets::{
-    BreakpointTier, HELP_OVERLAY_KIND, build_adaptive, build_chrome, build_css_dashboard,
-    build_css_dashboard_with_overlays, build_css_overlay_defs, build_default, help_overlay,
+    BreakpointTier, DemoPresetInfo, HELP_OVERLAY_KIND, build_adaptive, build_chrome,
+    build_css_dashboard, build_css_dashboard_with_overlays, build_css_overlay_defs, build_default,
+    build_grid_showcase, demo_presets, help_overlay,
 };
 pub use snapshot::DemoSnapshot;
 pub use state::{DemoError, DemoState, build_preset};

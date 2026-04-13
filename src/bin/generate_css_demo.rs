@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::process::ExitCode;
@@ -9,6 +10,7 @@ use demo_presets::{build_css_dashboard_with_overlays, text_on_color};
 use palette_core::color::Color;
 use palette_core::contrast::ContrastLevel;
 use palette_core::css::css_name;
+use palette_core::gradient::{ColorSpace, Gradient, GradientStop};
 use palette_core::palette::Palette;
 use palette_core::registry::{Registry, ThemeInfo};
 use palette_core::resolved::ResolvedPalette;
@@ -86,6 +88,85 @@ fn contrast_css(palette: &Palette) -> String {
     out
 }
 
+fn write_gradient_vars(out: &mut String, gradients: &[(Box<str>, Box<str>)]) {
+    for (name, gradient) in gradients {
+        let _ = writeln!(out, "  --gradient-{name}: {gradient};");
+    }
+}
+
+fn build_gradient(stops: [Color; 3], space: ColorSpace) -> Option<Gradient> {
+    Gradient::new(
+        [
+            GradientStop {
+                color: stops[0],
+                position: 0.0,
+            },
+            GradientStop {
+                color: stops[1],
+                position: 0.5,
+            },
+            GradientStop {
+                color: stops[2],
+                position: 1.0,
+            },
+        ],
+        space,
+    )
+    .ok()
+}
+
+fn resolved_gradient_entries(resolved: &ResolvedPalette) -> Vec<(Box<str>, Box<str>)> {
+    let mut entries: Vec<(Box<str>, Box<str>)> = resolved
+        .gradients()
+        .map(|(name, gradient)| (Box::<str>::from(name), gradient.to_css()))
+        .collect();
+
+    let derived = [
+        (
+            "demo-spectrum",
+            build_gradient(
+                [
+                    resolved.base.background,
+                    resolved.surface.focus,
+                    resolved.typography.link,
+                ],
+                ColorSpace::OkLab,
+            ),
+        ),
+        (
+            "demo-heat",
+            build_gradient(
+                [
+                    resolved.semantic.success,
+                    resolved.semantic.warning,
+                    resolved.semantic.error,
+                ],
+                ColorSpace::OkLch,
+            ),
+        ),
+        (
+            "demo-depth",
+            build_gradient(
+                [
+                    resolved.base.background_dark,
+                    resolved.base.background_highlight,
+                    resolved.surface.overlay,
+                ],
+                ColorSpace::OkLab,
+            ),
+        ),
+    ];
+
+    for (name, gradient) in derived {
+        if let Some(gradient) = gradient {
+            entries.push((Box::<str>::from(name), gradient.to_css()));
+        }
+    }
+
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
 fn resolved_to_css_scoped(resolved: &ResolvedPalette, selector: &str) -> String {
     let mut decls = String::with_capacity(4096);
     for_each_section!(resolved, all_slots, |section, slots| {
@@ -94,6 +175,8 @@ fn resolved_to_css_scoped(resolved: &ResolvedPalette, selector: &str) -> String 
     for_each_section!(resolved, all_slots, |section, slots| {
         write_css_vars(&mut decls, section, slots, "--text-on-", contrast_value);
     });
+    let gradients = resolved_gradient_entries(resolved);
+    write_gradient_vars(&mut decls, &gradients);
     format!("{selector} {{\n{decls}}}\n")
 }
 
@@ -124,12 +207,36 @@ fn write_swatch(out: &mut String, class: &str, bg_var: &str, text_var: &str, lab
     );
 }
 
+fn gradient_css(resolved: &ResolvedPalette) -> String {
+    let mut out = String::new();
+    let gradients = resolved_gradient_entries(resolved);
+    write_gradient_vars(&mut out, &gradients);
+    out
+}
+
+fn collect_gradient_names(
+    registry: &Registry,
+    themes: &[ThemeInfo],
+) -> Result<Box<[Box<str>]>, Error> {
+    let mut names = BTreeSet::new();
+    for info in themes {
+        let palette = registry
+            .load(&info.id)
+            .map_err(|e| Error::ThemeLoad(Arc::clone(&info.id), e))?;
+        for (name, _) in resolved_gradient_entries(&palette.resolve()) {
+            names.insert(name);
+        }
+    }
+    Ok(names.into_iter().collect())
+}
+
 fn generate_theme_css(registry: &Registry, info: &ThemeInfo) -> Result<String, Error> {
     let palette = registry
         .load(&info.id)
         .map_err(|e| Error::ThemeLoad(Arc::clone(&info.id), e))?;
     let selector = format!("[data-theme=\"{}\"]", info.id);
     let mut css = palette.to_css_scoped(&selector, None);
+    splice_before_closing_brace(&mut css, &gradient_css(&palette.resolve()));
     splice_before_closing_brace(&mut css, &contrast_css(&palette));
     // WCAG AA-adjusted variant
     let adjusted = palette.resolve_with_contrast(ContrastLevel::AaNormal);
@@ -187,6 +294,7 @@ fn generate_css(registry: &Registry, themes: &[ThemeInfo]) -> Result<String, Err
         .load(&themes[0].id)
         .map_err(|e| Error::ThemeLoad(Arc::clone(&themes[0].id), e))?;
     let mut root_css = first.to_css();
+    splice_before_closing_brace(&mut root_css, &gradient_css(&first.resolve()));
     splice_before_closing_brace(&mut root_css, &contrast_css(&first));
     css.push_str(&root_css);
     css.push('\n');
@@ -553,7 +661,7 @@ pre.code {
 // HTML body
 // ---------------------------------------------------------------------------
 
-fn body_content(theme_options: &str) -> String {
+fn body_content(theme_options: &str, gradient_names: &[Box<str>]) -> String {
     let mut html = String::with_capacity(16 * 1024);
 
     // Header
@@ -577,7 +685,7 @@ fn body_content(theme_options: &str) -> String {
 "#
     );
 
-    // Cards wrapped in their pane-node containers (nodes 2-9, depth-first)
+    // Cards wrapped in their pane-node containers (nodes 2-10, depth-first)
     let cards: Vec<String> = vec![
         swatch_card(
             "Base Colors",
@@ -619,6 +727,7 @@ fn body_content(theme_options: &str) -> String {
                 ("--ui-search", "search"),
             ],
         ),
+        gradient_card(gradient_names),
         swatch_card(
             "Typography",
             "typography",
@@ -638,7 +747,7 @@ fn body_content(theme_options: &str) -> String {
     ];
 
     for (i, card) in cards.iter().enumerate() {
-        let node_id = i + 2; // nodes 2 through 9
+        let node_id = i + 2; // nodes 2 through 10
         let _ = write!(
             html,
             "      <div data-pane-node=\"{node_id}\">\n{card}      </div>\n"
@@ -676,6 +785,25 @@ fn swatch_card(title: &str, pane_name: &str, swatches: &[(&str, &str)]) -> Strin
     for (var, label) in swatches {
         write_text_on_var(&mut text_var, var);
         write_swatch(&mut html, "swatch", var, &text_var, label);
+    }
+    html.push_str("          </div>\n        </section>\n");
+    html
+}
+
+fn gradient_card(gradient_names: &[Box<str>]) -> String {
+    let mut html = String::from(
+        "        <section class=\"card\" data-pane=\"gradients\">\n          <h2>Gradients</h2>\n          <div class=\"swatches\">\n",
+    );
+    match gradient_names.is_empty() {
+        true => html.push_str(
+            "            <p style=\"color:var(--text-comment);\">This theme set does not define any gradients.</p>\n",
+        ),
+        false => {
+            for name in gradient_names {
+                let var = format!("--gradient-{name}");
+                write_swatch(&mut html, "swatch", &var, "--fg", name);
+            }
+        }
     }
     html.push_str("          </div>\n        </section>\n");
     html
@@ -969,7 +1097,8 @@ fn theme_js() -> &'static str {
 fn generate_html(registry: &Registry, themes: &[ThemeInfo]) -> Result<String, Error> {
     let css = generate_css(registry, themes)?;
     let options = generate_theme_options(registry, themes);
-    let body = body_content(&options);
+    let gradient_names = collect_gradient_names(registry, themes)?;
+    let body = body_content(&options, &gradient_names);
 
     let mut html = String::with_capacity(css.len() + body.len() + 1024);
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");

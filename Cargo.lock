@@ -2731,9 +2731,9 @@ dependencies = [
 
 [[package]]
 name = "palette-core"
-version = "0.12.3"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa2705e32441942fc79f5908576a167a075ef5a6ae3b43b1217ce48dd0bdbdc3"
+checksum = "fd5ddc1a7c34585333a50efdaebf0dc05f3f6c310255f5d36128fb21a4afb3f9"
 dependencies = [
  "pastey",
  "ratatui",
@@ -2744,9 +2744,9 @@ dependencies = [
 
 [[package]]
 name = "panes"
-version = "0.18.5"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e25628e478e61a93cbdd6c745641c2444f3ed618f66f6d429eac43d322348e5"
+checksum = "5c7b6b251b12ba50682feb76d7bffe9b44b42141283440df0daf7e14bba7c267"
 dependencies = [
  "rustc-hash 2.1.2",
  "serde",
@@ -2756,12 +2756,13 @@ dependencies = [
 
 [[package]]
 name = "panes-css"
-version = "0.7.3"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acdb623d41c9dcfec7c47fe34904a0b8761eb40e2782e10165d24e069b24363c"
+checksum = "bb3e845a0893790de63320bf73c0f8971a515b9db732e22197b275046c68a68f"
 dependencies = [
  "panes",
  "taffy",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2780,9 +2781,9 @@ dependencies = [
 
 [[package]]
 name = "panes-egui"
-version = "0.4.12"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf58d223c20335d14c9b20f7ccf4fbab7ecf3fb8cea3f52832b31a0852393f45"
+checksum = "ae433ba634e5e0b3b927a0cdb3cb44e808b0f995f947bb893337b9f68e58a1ca"
 dependencies = [
  "egui",
  "panes",
@@ -2801,9 +2802,9 @@ dependencies = [
 
 [[package]]
 name = "panes-ratatui"
-version = "0.4.12"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a97f302f9af61c02cc7b320dde782987cb445db62d3159454a47d7222066b2a9"
+checksum = "bea5e293fa89936a14cc848b6f885eed51c30f7c90ec991c2db3d86e344d23a3"
 dependencies = [
  "panes",
  "ratatui",
@@ -2811,9 +2812,9 @@ dependencies = [
 
 [[package]]
 name = "panes-wasm"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9679d6c539ef516fabb913c865ddb8522e840e7fde76c1a77aed5957a57441d"
+checksum = "d2ef7e171b8efe17e84b5ddf5e6f8889abf24ed2d5dcdc76e10cf7531dc6d85d"
 dependencies = [
  "panes",
  "serde",
