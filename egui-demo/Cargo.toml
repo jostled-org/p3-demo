@@ -6,10 +6,10 @@ publish = false
 
 [dependencies]
 demo-presets = { path = "../demo-presets" }
-panes = "0.19"
-panes-egui = "0.5"
-palette-core = "0.14"
-eframe = "0.34"
+panes = "0.22"
+panes-egui = "0.7"
+palette-core = "0.15"
+eframe = "0.37"
 
 [lints.clippy]
 unwrap_used = "deny"

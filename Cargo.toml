@@ -13,12 +13,12 @@ name = "generate-css-demo"
 path = "src/bin/generate_css_demo.rs"
 
 [dependencies]
-panes = "0.19"
-panes-css = "0.8"
-panes-ratatui = "0.5"
-palette-core = { version = "0.14", features = ["terminal"] }
+panes = "0.22"
+panes-css = "0.11"
+panes-ratatui = "0.5.3"
+palette-core = { version = "0.15", features = ["terminal"] }
 ratatui = "0.30"
-crossterm = "0.28"
+crossterm = "0.29"
 demo-presets = { path = "demo-presets" }
 thiserror = "2"
 

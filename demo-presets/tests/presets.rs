@@ -2,7 +2,6 @@ use demo_presets::{
     Action, DemoState, build_chrome, build_css_dashboard, build_css_dashboard_with_overlays,
     build_default, demo_presets,
 };
-use panes_css;
 
 #[test]
 fn build_chrome_returns_some() {

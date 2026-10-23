@@ -73,10 +73,10 @@ fn to_egui_visuals(palette: &Palette) -> egui::Visuals {
     apply_color!(&palette.semantic.warning => v.warn_fg_color);
 
     // Window stroke
-    apply_stroke!(&palette.base.border, 1.0 =>
+    apply_stroke!(&palette.base.border, 1.0_f32 =>
         v.window_stroke,
         v.widgets.noninteractive.bg_stroke);
-    apply_stroke!(&palette.base.border_highlight, 1.0 =>
+    apply_stroke!(&palette.base.border_highlight, 1.0_f32 =>
         v.widgets.hovered.bg_stroke,
         v.widgets.active.bg_stroke);
 
@@ -89,17 +89,17 @@ fn to_egui_visuals(palette: &Palette) -> egui::Visuals {
         v.widgets.open.bg_fill);
 
     // Widget foreground strokes
-    apply_stroke!(&palette.base.foreground, 1.0 =>
+    apply_stroke!(&palette.base.foreground, 1.0_f32 =>
         v.widgets.noninteractive.fg_stroke);
-    apply_stroke!(&palette.base.foreground_dark, 1.0 =>
+    apply_stroke!(&palette.base.foreground_dark, 1.0_f32 =>
         v.widgets.inactive.fg_stroke);
 
     // Selection
     apply_color!(&palette.surface.selection => v.selection.bg_fill);
-    apply_stroke!(&palette.editor.selection_fg, 1.0 => v.selection.stroke);
+    apply_stroke!(&palette.editor.selection_fg, 1.0_f32 => v.selection.stroke);
 
     // Text cursor
-    apply_stroke!(&palette.editor.cursor, 2.0 => v.text_cursor.stroke);
+    apply_stroke!(&palette.editor.cursor, 2.0_f32 => v.text_cursor.stroke);
 
     // Typography
     apply_color!(&palette.typography.link => v.hyperlink_color);
@@ -302,7 +302,7 @@ fn egui_key_to_action(key: egui::Key, shift: bool) -> Option<Action> {
 }
 
 fn render_header(app: &mut DemoApp, ui: &mut egui::Ui, time: f64) {
-    egui::Panel::top("header").show_inside(ui, |ui| {
+    egui::Panel::top("header").show(ui, |ui| {
         ui.horizontal(|ui| {
             render_preset_combo(app, ui, time);
             ui.separator();
@@ -366,7 +366,7 @@ fn render_theme_combo(app: &mut DemoApp, ui: &mut egui::Ui) {
 }
 
 fn render_status(app: &DemoApp, ui: &mut egui::Ui) {
-    egui::Panel::bottom("status").show_inside(ui, |ui| {
+    egui::Panel::bottom("status").show(ui, |ui| {
         render_status_lines(app, ui);
     });
 }
@@ -399,7 +399,7 @@ fn render_status_lines(app: &DemoApp, ui: &mut egui::Ui) {
 }
 
 fn render_viewport(app: &mut DemoApp, ui: &mut egui::Ui) {
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         let available = ui.available_rect_before_wrap();
         render_panels(app, ui, available);
     });
@@ -455,8 +455,8 @@ fn render_panels(app: &mut DemoApp, ui: &mut egui::Ui, available: egui::Rect) {
         painter.rect_filled(display_rect, 0.0, panel_bg);
 
         let (stroke_color, stroke_width) = match is_focused {
-            true => (focus_border, 2.0),
-            false => (border_color, 1.0),
+            true => (focus_border, 2.0_f32),
+            false => (border_color, 1.0_f32),
         };
         painter.rect_stroke(
             display_rect,
@@ -529,11 +529,11 @@ fn render_single_overlay(app: &DemoApp, ctx: &egui::Context, overlay: &OverlayRe
 
     let frame = egui::Frame::new()
         .fill(overlay_bg)
-        .stroke(egui::Stroke::new(2.0, border_color))
+        .stroke(egui::Stroke::new(2.0_f32, border_color))
         .corner_radius(6.0)
         .inner_margin(12.0);
 
-    egui::Area::new(egui::Id::new(&overlay.kind))
+    egui::Area::new(egui::Id::unique(&overlay.kind))
         .fixed_pos(overlay.rect.min)
         .constrain(false)
         .show(ctx, |ui| {

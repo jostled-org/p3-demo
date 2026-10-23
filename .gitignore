@@ -3,15 +3,8 @@
 *.swo
 .DS_Store
 logs/
-docs/.codebase-snapshot.md
 css-demo/
 wasm-demo/pkg/
 .manifest.toml
-docs/specs/
-docs/plans/
-docs/scripts/
-docs/planning_guidelines.md
-docs/introspection_guidelines.md
-docs/design-rationale.md
-docs/testing.md
+docs/**
 .mcp.json

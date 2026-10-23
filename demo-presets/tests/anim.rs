@@ -23,5 +23,5 @@ fn ease_out_is_monotonic() {
 
 #[test]
 fn anim_duration_is_positive() {
-    assert!(ANIM_DURATION_SECS > 0.0);
+    const { assert!(ANIM_DURATION_SECS > 0.0) };
 }
