@@ -27,3 +27,17 @@ fn chromatic_colors_has_twelve_distinct() {
         assert_ne!(pair[0], pair[1]);
     }
 }
+
+#[test]
+fn text_on_gray_just_below_luminance_midpoint_is_white() {
+    let gray = Color::from_hex("#757575").unwrap();
+    assert!(gray.relative_luminance() < Color::LUMINANCE_MIDPOINT);
+    assert_eq!(text_on_color(&gray), "#fff");
+}
+
+#[test]
+fn text_on_gray_just_above_luminance_midpoint_is_black() {
+    let gray = Color::from_hex("#767676").unwrap();
+    assert!(gray.relative_luminance() > Color::LUMINANCE_MIDPOINT);
+    assert_eq!(text_on_color(&gray), "#000");
+}

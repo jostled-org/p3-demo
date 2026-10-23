@@ -2826,6 +2826,7 @@ version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "311b5aa107cd9886fa54205d1e9affb1c3613d3a905e95e0f076a4efd537292b"
 dependencies = [
+ "egui",
  "pastey",
  "ratatui",
  "serde",

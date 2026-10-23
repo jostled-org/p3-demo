@@ -28,12 +28,8 @@ pub fn chromatic_colors(resolved: &ResolvedPalette) -> [&Color; 12] {
     out
 }
 
-fn is_light(bg: &Color) -> bool {
-    bg.relative_luminance() > 0.179
-}
-
 pub fn text_on_color(color: &Color) -> &'static str {
-    match is_light(color) {
+    match color.is_light() {
         true => "#000",
         false => "#fff",
     }

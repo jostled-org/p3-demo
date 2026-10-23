@@ -8,7 +8,7 @@ publish = false
 demo-presets = { path = "../demo-presets" }
 panes = "0.22"
 panes-egui = "0.7"
-palette-core = "0.15"
+palette-core = { version = "0.15", features = ["egui"] }
 eframe = "0.37"
 
 [lints.clippy]
